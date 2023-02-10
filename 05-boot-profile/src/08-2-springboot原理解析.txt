@@ -1,0 +1,260 @@
+SpringBoot原理
+    1、SpringBoot启动过程
+    2、Application Events and Listeners
+    3、ApplicationRunner 与 CommandL
+--------------------------------------------
+1.SpringBoot启动过程
+    1.我们从主配置类开始启动（@SpringBootApplication）
+        进入SpringApplication.run(Application.class, args);：
+            发现run(new Class[]{primarySource}, args);这就是将我们的注程序类传过来，使用run方法，我们进入run中
+                return (new SpringApplication(primarySources)).run(args);
+                这行代码是：创建 SpringApplication 并且 运行 SpringApplication
+    2.我们先说：创建 SpringApplication
+        - 先调用SpringApplication有参构造器（两个参数   ）    --- this((ResourceLoader)null, primarySources);
+            - 进入下一步这有调用了一个有参构造器，设置了很多东西的值
+            - 下一步来到（SpringApplication的210行）private Set<String> sources = new LinkedHashSet<>();
+                这代表在初始化一些属性，我们一致往下，直到进入
+            - 构造器：public SpringApplication(ResourceLoader resourceLoader, Class<?>... primarySources)
+                    - 1.设置资源加载器resourceLoader
+                    - 2.断言（我们的primarySources就是我们的主配置类不为空）
+                    - 3.保存我们的primarySources（以LinkedHashSet方式）
+                    - 4.判断webApplicationType(当前Web应用的类型)，使用WebApplicationType.deduceFromClasspath()
+                        可以进入deduceFromClasspath：使用；
+                            使用ClassUtils（类工具类），首先检查当前系统是否有WEBFLUX_INDICATOR_CLASS响应式编程的类
+                                如果有就return WebApplicationType.REACTIVE;
+                                如果没有return WebApplicationType.SERVLET;（我们的项目就是原生的servlet编程）
+                    - 5.找初始化引导器bootstrapRegistryInitializers类型是（List<Bootstrapper>），通过方法getBootstrapRegistryInitializersFromSpringFactories();获取
+                        进入该方法：
+                            - getSpringFactoriesInstances(Bootstrapper.class).stream()
+                                前半部分是获取一个SpringFactoriesInstances实例,调用一个同名的重载方法，返回一个Collection类型
+                                    进入该重载方法中：
+                                        - 先是资源加载器获取类加载器return this.resourceLoader.getClassLoader();
+                                        - 。。。。type为（org.springframework.boot.Bootstrapper）
+                                        - 返回了一个实例SpringFactories的Instances（Collection类型，size为0）
+
+                                后半部分的stream()是使用了jdk8的新特性Stream
+                            - 此时又来到getBootstrapRegistryInitializersFromSpringFactories
+                                通过上面的getSpringFactoriesInstances我们获得了一个initializers，size为0
+                                对这个initializers又做了map和foreach，但是size为0没啥用
+                            - 返回这个initializers
+                          因此此时获取的   bootstrapRegistryInitializers为null,说明向初始化时没有任何初始化引导器
+                        bootstrappers：初始启动引导器去spring.factories文件中找 org.springframework.boot.Bootstrapper
+                    - 6.找初始化器ApplicationContextInitializer：通过setInitializers找初始化器ApplicationContextInitializer（也是在文件spring.factories找）
+                            过程同上面一样，只是type为org.springframework.context.ApplicationContextInitializer
+                            这里找到了8个
+                    - 7.找监听器（11个）
+                        同上，去spring.factories找org.springframework.context.ApplicationListener
+                    - 8.确定mainApplicationClass
+                            通过堆栈找到有main方法的程序，有很对找到第一个就可以，但是现在是（null）
+
+
+    对2的总结：
+        ● 创建 SpringApplication
+          ○ 保存一些信息。
+          ○ 判定当前应用的类型。ClassUtils。Servlet
+          ○ bootstrappers（bootstrapRegistryInitializers）：初始启动引导器（List<Bootstrapper>）：去spring.factories文件中找 org.springframework.boot.Bootstrapper
+          ○ 找 ApplicationContextInitializer；去spring.factories找 ApplicationContextInitializer
+            ■ List<ApplicationContextInitializer<?>> initializers
+          ○ 找 ApplicationListener  ；应用监听器。去spring.factories找 ApplicationListener
+            ■ List<ApplicationListener<?>> listeners
+    3.接着说：运行 SpringApplication
+        - 进入run(args)中：（这些args其实就是命令行参数）
+            1.新建StopWatch对象，
+            2.调用stopWatch.start()，设置currentTaskName和startTimeNanos
+            3.createBootstrapContext（创建引导上下文）
+                1.创建一个DefaultBootstrapContext对象bootstrapContext
+                2.bootstrapRegistryInitializers（在创建SpringApplication时设置了）
+                    注意：BootstrapRegistryInitializer是一个函数式接口（方法是initialize(BootstrapRegistry registry)）
+                    ■ 获取到所有之前的 bootstrappers 挨个执行 intitialize(bootstrapContext) 来完成对引导启动器上下文环境设置
+            4.configureHeadlessProperty(配置Headless属性)：
+                使用System.setProperty("java.awt.headless",System.getProperty("java.awt.headless", "true"))
+                    让当前应用进入headless模式（自力更生模式）。java.awt.headless
+            5.getRunListeners返回一个SpringApplicationRunListeners （1个）
+                SpringApplicationRunListeners(  logger,
+                                                getSpringFactoriesInstances(SpringApplicationRunListener.class, types, this, args),
+                				                this.applicationStartup);
+                				                第二个参数又是使用getSpringFactoriesInstances即从spring.factories找组件SpringApplicationRunListener
+                    最终返回的是EventPublishingRunListener
+                获取所有 RunListener（运行监听器）【为了方便所有Listener进行事件感知】
+                    SpringApplicationRunListeners是类
+                    SpringApplicationRunListener是接口
+            6.listeners.starting(bootstrapContext, this.mainApplicationClass);
+                进入starting中：
+                    doWithListeners内：
+                        this.listeners.forEach(listenerAction);遍历所有的listener
+                相当于通知所有感兴趣系统正在启动过程的人，项目正在 starting。
+            7.DefaultApplicationArgument保存命令行参数
+            8.prepareEnvironment内（返回值为ConfigurableEnvironment）
+                1.getOrCreateEnvironment（如果有就返回该环境，但是此时没有，于是其判断webApplicationType
+                                        发现是servlet类型的，所以返回new StandardServletEnvironment()）
+                    返回或者获取基础的环境信息
+                2.configureEnvironment(environement,命令行参数)
+                    配置环境信息
+                        进入该方法：
+                            首先是一个类型转换器（用于将配置文件的值最类型转换）
+                            接着configurePropertiesSource，这就是加载外部的配置源（读取所有的配置源的配置属性值。）
+                            最后configureProfiles这是激活我们的profile环境的
+                3.ConfigurePropertiesSource.attach(environment)
+                    绑定环境信息
+                4.监听器调用 listener.environmentPrepared(..)；通知所有的监听器当前环境准备完成
+                        对每一个listener做环境准备
+                5.moveToEnd把当前的环境信息设置到类的最后
+                6.配置额外的profiles
+                ....
+                返回一个environment
+            9.configureIgnoreBeanInfo
+            10.打印banner图
+      ☆☆☆11.createApplicationContext创建ioc容器  返回值为ConfigurableApplicationContext
+                使用applicationContextFactory.creat(根据webapplication当前项目的类型)
+                    进入create:如果是servlet返回AnnotationConfigServletWebServerApplicationContext类型
+                此时的ioc容器为参数context
+            12.context.setApplicationStartup 保存startup信息
+            13.prepareContext准备ioc容器的基本信息
+                prepareContext(bootstrapContext,
+                                context,
+                                environment,
+                                listeners,
+                                applicationArguments,
+                                printedBanner);
+                    进入该方法：
+                        1.为ioc保存环境信息
+                        2.IOC容器的后置处理流程（即ioc容器还需要干啥？）：postProcessApplicationContext
+                        3.applyInitializers(ioc)：应用初始化器（在创建SpringApplication时已经获取所有的initializers初始化器）
+                           ● 遍历所有的 ApplicationContextInitializer （8个）。调用 initialize.。来对ioc容器进行初始化扩展功能
+                        4.listeners.contextPrepared(ioc)
+                           ● 遍历所有的 listener 调用 contextPrepared。
+                                EventPublishRunListenr；通知所有的监听器contextPrepared事件完成
+                        5.bootstrapContext.close(ioc)
+                            引导上下文关闭
+                        ....
+                        拿到bean工厂
+                        使用bean工厂注册单实例（这说明我们的命令行参数也是一个组件 ）
+                        banner也是一个组件
+                        ...
+                        最后：listeners.contextLoaded(ioc);
+                            所有的监听器 调用contextLoaded。通知所有的监听器 contextLoaded；
+            14.refreshContext(ioc)刷新ioc容器
+                    进入该方法：
+                        1.先注册一个钩子：ioc.registerShutdownHook
+               ☆☆☆☆☆2.refresh((ApplicationContext) ioc)   spring的核心源码
+                            连续进入出现的不同的refresh方法后，我们最终在AbstractApplicationContext的refresh看见spring容器的经典的整个初始化过程
+                                在这个refresh中：Instantiate all remaining (non-lazy-init) singletons.
+                                                单实例化容器中的所有组件
+                         创建容器中的所有组件（Spring注解）
+            15.afterRefresh(context, applicationArguments)暂时没有任何任务
+            16.stopWatch.stop();之后会显示我们整个容器全部启动完成花费的时间
+            17.listeners.started(context);
+                通知所有的监听器 started
+            18.callRunners(ioc, applicationArguments)
+                进入该方法：
+                    1.准备了一个List runners
+                    2.按照类型获取ioc中ApplicationRunner和CommandLineRunner的组件都放到runners中
+                    3.使用AnnotationAwareOrderComparator.sort(runners)
+                          合并所有runner并且按照@Order进行排序
+                    4.遍历所有的runner（按照类型调用对应的run方法）。调用 run 方法
+            19.如果以上有异常，处理异常handleRunFailure
+                    listeners.failed(context, exception)
+                        调用Listener 的 failed
+            20.listeners.running(context);
+                    调用所有监听器的 running 方法，
+                    通知所有的监听器 running
+            20.running如果有问题（handleRunFailure）。
+                继续通知 failed 。调用所有 Listener 的 failed；通知所有的监听器 failed
+
+    对3的总结：
+        ● 运行 SpringApplication
+          ○ StopWatch
+          ○ 记录应用的启动时间
+          ○ 创建引导上下文（Context环境）createBootstrapContext()
+            ■ 获取到所有之前的 bootstrappers 挨个执行 intitialize() 来完成对引导启动器上下文环境设置
+          ○ 让当前应用进入headless模式。java.awt.headless
+          ○ 获取所有 RunListener（运行监听器）【为了方便所有Listener进行事件感知】
+            ■ getSpringFactoriesInstances 去spring.factories找 SpringApplicationRunListener.
+          ○ 遍历 SpringApplicationRunListener 调用 starting 方法；
+            ■ 相当于通知所有感兴趣系统正在启动过程的人，项目正在 starting。
+
+          ○ 保存命令行参数；ApplicationArguments
+          ○ 准备环境 prepareEnvironment（）;
+            ■ 返回或者创建基础环境信息对象。StandardServletEnvironment
+            ■ 配置环境信息对象。
+              ● 读取所有的配置源的配置属性值。
+            ■ 绑定环境信息
+            ■ 监听器调用 listener.environmentPrepared()；通知所有的监听器当前环境准备完成
+          ○ 创建IOC容器（createApplicationContext（））
+            ■ 根据项目类型（Servlet）创建容器，
+            ■ 当前会创建 AnnotationConfigServletWebServerApplicationContext
+
+          ○ 准备ApplicationContext IOC容器的基本信息   prepareContext()
+            ■ 保存环境信息
+            ■ IOC容器的后置处理流程。
+            ■ 应用初始化器；applyInitializers；
+              ● 遍历所有的 ApplicationContextInitializer 。调用 initialize.。来对ioc容器进行初始化扩展功能
+              ● 遍历所有的 listener 调用 contextPrepared。EventPublishRunListenr；通知所有的监听器contextPrepared
+            ■ 所有的监听器 调用 contextLoaded。通知所有的监听器 contextLoaded；
+          ○ 刷新IOC容器。refreshContext
+            ■ 创建容器中的所有组件（Spring注解）
+          ○ 容器刷新完成后工作？afterRefresh
+          ○ 所有监听 器 调用 listeners.started(context); 通知所有的监听器 started
+          ○ 调用所有runners；callRunners()
+            ■ 获取容器中的 ApplicationRunner
+            ■ 获取容器中的  CommandLineRunner
+            ■ 合并所有runner并且按照@Order进行排序
+            ■ 遍历所有的runner。调用 run 方法
+          ○ 如果以上有异常，
+            ■ 调用Listener 的 failed
+          ○ 调用所有监听器的 running 方法  listeners.running(context); 通知所有的监听器 running
+          ○ running如果有问题。继续通知 failed 。调用所有 Listener 的 failed；通知所有的监听器 failed
+
+
+
+2.Application Events and Listeners
+        https://docs.spring.io/spring-boot/docs/current/reference/html/spring-boot-features.html#boot-features-application-events-and-listeners
+    ApplicationContextInitializer
+    ApplicationListener
+    SpringApplicationRunListener
+3.ApplicationRunner 与 CommandLineRunner
+4.实验，自定义事件监听组件：
+    - ApplicationContextInitializer
+    - ApplicationListener
+    - SpringApplicationRunListener
+    - ApplicationRunner
+    - CommandLineRunner
+
+    第一步：
+        创建上面对应的五个自定义类，实现方法
+    第二步：
+        在自己项目的resource中设置META-INF/spring.factories
+            org.springframework.context.ApplicationContextInitializer=\
+                com.xjws.boot.listener.MyApplicationContextInitializer
+
+            org.springframework.context.ApplicationListener=\
+              com.xjws.boot.listener.MyApplicationListener
+
+            org.springframework.xjws.SpringApplicationRunListener=\
+              com.xjws.boot.listener.MySpringApplicationRunListener
+    第三步：
+        为
+            ApplicationRunner
+            CommandLineRunner
+        添加到容器中@Component，并且可以设置Order
+
+MyApplicationListener...onApplicationEvent
+MyApplicationListener...onApplicationEvent
+banner图
+MyApplicationContextInitializer...initialize
+MyApplicationListener...onApplicationEvent
+
+MyApplicationListener...onApplicationEvent
+
+MyApplicationListener...onApplicationEvent
+MyApplicationListener...onApplicationEvent
+
+MyApplicationListener...onApplicationEvent
+MyApplicationListener...onApplicationEvent
+MyCommandLineRunner...run
+MyApplicationRunner...run
+MyApplicationListener...onApplicationEvent
+MyApplicationListener...onApplicationEvent
+
+MyApplicationListener...onApplicationEvent
+MyApplicationListener...onApplicationEvent

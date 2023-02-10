@@ -1,0 +1,234 @@
+原理解析
+    1、Profile功能
+        1、application-profile功能
+        2、@Profile条件装配功能
+        3、profile分组
+    2、外部化配置
+        1、外部配置源
+        2、配置文件查找位置
+        3、配置文件加载顺序：
+        4、指定环境优先，外部优先，后面的可以覆盖前面的同名配置项
+    3、自定义starter
+        1、starter启动原理
+        2、自定义starter
+    4、SpringBoot原理
+        1、SpringBoot启动过程
+        2、Application Events and Listeners
+        3、ApplicationRunner 与 CommandL
+-----------------------------------------------
+1、Profile功能
+  1.application-profile功能
+        （官方文档：Spring Boot Features--3. Profiles）
+     - 为了方便多环境适配，springboot简化了profile功能。
+     - 解释：
+            我们现在是在我们本机测试，但当我门的应用需要上线时肯定是需要迁移的
+            我们之前设置的配置可能都不能用了，因此为例方便的修改
+            我们使用profile进行快速的环境切换（本机、Linux）
+     - 一般我们会在微服务中设置多个配置文件（告诉springboot哪个是测试环境配置文件，哪个是生产环境配置文件、）
+
+    - 额外知识点：
+        我么可以使用注解@Value(${在配置文件中配置的那个属性})来为定义的成员变量赋值
+        @Value(${person.name})
+        @Value(${person.name:李四})   //如果取不到person.name，我们定义一个默认值为“李四”
+   - 实验：
+        - 实验描述：
+            我们本次实验是想要描述测试环境与生产环境的配置文件如何切换；
+        - 代码：
+
+   - 激活环境的两种方式：
+        方式1配置文件激活：在默认配置文件中设置spring.profiles.active=环境名字
+        方式2命令行激活：去maven projects中打包pakage一下 （注意假设打包的这个我们设置是使用的测试环境）
+                现在我们打完的jar包默认就是使用那个生产环境的配置文件
+                此时如何修改环境？
+                    java -jar jar包 --spring.profiles.active=环境名字
+                修改配置文件的任意值，命令行优先
+   - 注意：
+        ● 默认配置与环境配置同时生效
+        ● 同名配置项，profile配置优先
+        - application.xml或者application.yaml称为默认配置文件，他们永远都会加载
+        - 测试环境配置文件或者生产环境配置文件，我们也必须以application开头，
+            例如：
+                application-test.yam
+                application-pord.yam
+        - spring.profiles.active=prod    指定激活的环境(就是配置文件去掉前缀application-后的部分 )
+  2.@Profile条件装配功能
+    @Profile("环境名字")可以修饰类和方法
+    表示修改的这个东西只有使用该环境的时候才会生效，此时我们可以结合ConfigurationProperties("配置文件的配置项")
+        来获取对应那个配置环境中的配置项
+    例如：
+        @Profile("testxj")
+        @Profile(value={"default","testxj"})  这个default代表默认我们就使用下面的类或方法
+    实验流程：
+        1.设置多个application-xxx的配置文件
+        2.然后使用注解@Profile
+            @Component
+            @ConfigurationProperties("person")
+            @Profile("testxj")
+            @Data
+            public class Person {
+
+                private  String name;
+                private String age;
+            }
+
+        3.在controller使用@Autowired Person
+        4.去默认配置文件中设置使用哪个环境
+  3.profile分组
+        spring.profiles.group.production[0]=proddb
+        spring.profiles.group.production[1]=prodmq
+            production是组名（我们自定义）
+            proddb和prodmq都是配置文件--配置环境的名字
+        使用：--spring.profiles.active=production（组名）  激活
+2、外部化配置
+   （官方文档：Spring Boot Features--2.Externalized Configuration）
+
+   1.我们的配置源可以是：
+        properties文件、yaml文件、环境变量（系统变量）、命令行参数
+        - 我们可以通过注解@Value(${"环境变量名字（例如：os.name）"})，以此给成员变量赋值
+        -我们可以通过ioc容器获取系统环境
+            @SpringBootApplication
+            public class Application {
+                public static void main(String[] args) {
+                    ConfigurableApplicationContext ioc = SpringApplication.run(Application.class, args);
+                    ConfigurableEnvironment environment = ioc.getEnvironment();
+                    Map<String, Object> systemEnvironment = environment.getSystemEnvironment();
+                    Map<String, Object> systemProperties = environment.getSystemProperties();
+                    System.out.println(systemEnvironment);
+                    System.out.println(systemProperties);}}
+   2.配置文件查找位置
+    (14个（后面的可以覆盖前面的同名配置项）。见说明文档)
+    我们以application.xml这个默认配置的位置为例说明：
+        以下这些位置都可以放application.xml(yam)，后面的可以覆盖前面的同名配置项
+        (1) classpath 根路径
+        (2) classpath 根路径下config目录
+        (3) jar包（指我们为项目打@的包）当前目录（意思是跟jar包在同一级目录下）
+                这个就很方便，比如我们已经打包部署醒目，
+                我们直接在同一级目录下新建一个application.xml(yaml)
+                加入一些配置就能覆盖之前的配置
+        (4) jar包当前目录的config目录（意思是跟jar包在同一级目录下）
+            这个也很方便
+        (5) /config子目录的直接子目录(这个目录名字没有要求)
+
+   3.配置文件加载顺序
+        1. 　当前jar包内部的application.properties和application.yml
+        2. 　当前jar包内部的application-{profile}.properties 和 application-{profile}.yml
+        3. 　引用的外部jar包的application.properties和application.yml
+        4. 　引用的外部jar包的application-{profile}.properties 和 application-{profile}.yml
+   总结：指定环境优先，外部优先，后面的可以覆盖前面的同名配置项
+
+3、自定义starter
+    1、starter启动原理
+        ● starter-pom引入 autoconfigurer 包
+        ● autoconfigure包中配置使用 META-INF/spring.factories 中 EnableAutoConfiguration 的值，使得项目启动加载指定的自动配置类
+        ● 编写自动配置类 xxxAutoConfiguration -> xxxxProperties
+          ○ @Configuration
+          ○ @Conditional
+          ○ @EnableConfigurationProperties
+          ○ @Bean
+          ○ ......
+        引入starter --- xxxAutoConfiguration --- 容器中放入组件 ---- 绑定xxxProperties ---- 配置项
+    2、自定义starter+
+        1.我们先创建一个空项目：my_springboot_xjstarter
+        2.去项目结构中创建模块：atguigu-hello-spring-boot-starter（启动器）（创建一个maven）
+                        和
+                        atguigu-hello-spring-boot-starter-autoconfigure（自动配置包）（无需选择场景）(删除test文件夹)
+        3.我们在atguigu-hello-spring-boot-starter中引入atguigu-hello-spring-boot-starter-autoconfigure
+                <groupId>com.xjws</groupId>
+                <artifactId>atguigu-hello-spring-boot-starter-autoconfigure</artifactId>
+                <version>0.0.1-SNAPSHOT</version>
+        4.假设我们现在有一个service业务逻辑需要经常使用，我们想要把其功能抽取出来
+            HelloService（不要使用@Component）
+        5.并且我们设置一个属性类：HelloProperties（绑定配置文件中的xjws.hello的配置）
+            需要使用注解ConfigurationProperties("")
+            设置属性（以及getter setter）
+        6.在HelloService中我们使用HelloProperties中的属性，利用自动装配
+        7.设置一个配置类：HelloServiceAutoConfiguration
+            类似之前看的呢些配置类，我们也可以使用条件配置
+            1.@Configuration
+            2.@ConditionalOnMissingBean(HelloService.class)
+            3.并且注册一个bean,用来返回HelloService
+            4.还需要使用注解@EnableConfigurationProperties(HelloProperties.class)
+                因为我们在HelloService中用到了一个自动装配HelloProperties，因此我们需要开启属性文件绑定功能
+                    该注解会使类HelloProperties会自动去将设置的配置文件进行绑定，并且注册到ioc容器中去
+        8.我们先对atguigu-hello-spring-boot-starter-autoconfigure中maven project的lifecycle下的clean和install
+            然后对atguigu-hello-spring-boot-starter中maven project的lifecycle下的clean和install
+            （其实注意控制台有：
+                [INFO] Installing D:\UserIntellijIDEA\my_springboot_xjstarter\atguigu-hello-spring-boot-starter-autoconfigure\pom.xml to C:\Users\dell\.m2\repository\com\xjws\atguigu-hello-spring-boot-starter-autoconfigure\0.0.1-SNAPSHOT\atguigu-hello-spring-boot-starter-autoconfigure-0.0.1-SNAPSHOT.pom
+                因为每次新建项目都需要去IDEA中设置maven，这次我没设置就使用了IDEA提供的默认的Maven）
+
+                Maven home directory: E:/apache-maven-3.5.4
+                User settings file:   E:\apache-maven-3.5.4\conf\settings.xml
+                Local repository:     E:\apache-maven-3.5.4\repo
+                这也解释了我们在我们现在这个主项目的模块中无法引入我们自定义的starter的原因
+        9.我们新建一个项目（my_springboot_xjstarter_fortest），用来引入我们上面创建的statrer，
+            （我们只需在该项目中引入starter依赖即可）
+                    <groupId>com.xjws</groupId>
+                    <artifactId>atguigu-hello-spring-boot-starter</artifactId>
+                    <version>1.0-SNAPSHOT</version>
+        10.此时我们应该使用我们引入的这个starter
+            - 但是分析：autoconfigure包中配置使用 META-INF/spring.factories 中
+                EnableAutoConfiguration 的值，使得项目启动加载指定的自动配置类
+            - 因此此时我们需要去atguigu-hello-spring-boot-starter-autoconfigure的resource下创建一个
+                META-INF/spring.factories
+                内容是：
+                        # Auto Configure
+                        org.springframework.boot.autoconfigure.EnableAutoConfiguration=\
+                        com.xjws.hello.auto.HelloServiceAutoConfiguration
+         11.再对atguigu-hello-spring-boot-starter-autoconfigure中maven project的lifecycle下的clean和install
+         12.使用：
+            我们在my_springboot_xjstarter_fortest中使用我们的starter
+            --------------------------------------
+            @Controller
+            public class HelloController {
+                @Autowired
+                HelloService helloService;
+                //并且我们可以通过配置文件中xjws.hello来设置
+                @ResponseBody
+                @GetMapping("/hello")
+                public String helloTest(){
+                    String helloWords = helloService.sayHello("张三");
+                    return "这个就是："+helloWords;
+                }
+            }
+            --------------------------------------
+            xjws.hello.prefix=123
+            xjws.hello.suffix=456
+            server.port=9999
+        ------------------------------------------------------------
+            //注意我们不是用@Service注解
+            public class HelloService {
+
+                @Autowired
+                HelloProperties helloProperties;
+
+                public String sayHello(String name){
+            //        return prefix+":"+name+"》"+suffix;
+                    //我们可以设置一个属性类：HelloProperties.java
+                    return helloProperties.getPrefix()+":"+name+"》"+helloProperties.getSuffix();
+                }
+            }
+            ---------------------------------------------------------
+           @Configuration
+           @EnableConfigurationProperties(HelloProperties.class)
+           @ConditionalOnMissingBean(HelloService.class)
+           public class HelloServiceAutoConfiguration {
+               @Bean
+               public HelloService helloService(){
+                   return new HelloService();
+               }
+           }
+
+4、SpringBoot原理
+    1、SpringBoot启动过程
+    2、Application Events and Listeners
+    3、ApplicationRunner 与 CommandL
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,27 @@
+person:
+  #下面每个冒号后必须有空格
+       userName: zhangsan
+       boss: true
+       birth: 2016/12/12
+       age: 10
+       pet:
+         name: 小黑狗
+         weight: 12.25
+#       interests: [篮球,足球]
+       interests:
+         - 篮球
+         - 足球
+       animal: [阿猫,阿狗]
+       score: {english:80,math:90}
+       salarys:
+         - 9999
+         - 8888
+       allPets:
+         sick:
+           - {name: 啊驴,weight: 12.25}
+           - {name: 猪,weight: 122.5}
+           - name: 虫
+             weight: 12.00
+         health:
+           - {name: 阿花,weight: 12.25}
+           - {name: 阿媚,weight: 122.5}

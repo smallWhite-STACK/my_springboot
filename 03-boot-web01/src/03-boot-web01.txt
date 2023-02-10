@@ -1,0 +1,1051 @@
+1.SpringMVC自动配置概览
+我么先进入文档7.1.1中Spring MVC Auto-configuration（SpringMVC自动配置概览）
+ - 大多场景我们都无需自定义配置
+      - 内容协商视图解析器 和 BeanName视图解析器
+      - 静态资源（包括webjars）
+      - 自动注册 Converter，GenericConverter，Formatter
+      - 支持 HttpMessageConverters （后来我们配合内容协商理解原理）
+      - 自动注册 MessageCodesResolver （国际化用）
+      - 静态index.html 页支持
+      - 自定义 Favicon
+      - 自动使用 ConfigurableWebBindingInitializer ，（DataBinder负责将请求数据绑定到JavaBean上）
+            不用@EnableWebMvc注解。使用 @Configuration + WebMvcConfigurer 自定义规则
+            声明 WebMvcRegistrations 改变默认底层组件
+            使用 @EnableWebMvc+@Configuration+DelegatingWebMvcConfiguration 全面接管SpringMVC
+----------------------------------------1------------------------------------------
+
+2.简单功能分析
+ 2.1、静态资源访问(Developing Web Applications-->The “Spring Web MVC Framework”-->7.1.5. Static Content)
+    1、静态资源目录
+            - /static
+            - /public
+            - /resources
+            - /META-INF/resources)
+            以上四个只要是在classpath下功能是一样的
+       - 访问：
+            当前项目根路径+静态资源名（http://localhost:8080/资源名字）
+       - 原理：
+            静态映射/**（拦截所有请求）。
+                请求进来，先去找Controller看能不能处理。
+                不能处理的所有请求又都交给静态资源处理器。静态资源也找不到则响应404页面
+
+    2、静态资源访问前缀
+        比如以后在设置拦截器时，通过设置静态资源前缀，达到放行静态资源的目的
+        - 改变默认的静态资源路径：
+            spring:
+              mvc:
+                static-path-pattern: /自己设置的前缀/**
+                （http://localhost:8080/自己设置的前缀/资源名字）
+              resources:
+                static-locations: [classpath:/haha（自己设置静态资源所在的文件夹）/]（修改默认的静态资源目录）
+    3、webjar
+        我们通过
+            https://www.webjars.org/
+            通过导入对应的jar包的依赖，然后
+            实现自动映射 /webjars/**
+
+             我们以jqurey为例：
+                1.在webjars官网寻找maven依赖
+                    <dependency>
+                        <groupId>org.webjars.npm</groupId>
+                        <artifactId>jquery</artifactId>
+                        <version>3.5.1</version>
+                    </dependency>
+                2.然后我们来外部库中寻找jquery
+                    进入我们看看路径：
+                        META-INF\resources\webjars\jquery\3.5.1
+                            上面路径中的webjars就是类路径（我们访问时如下所示：（后面地址要按照依赖里面的包路径））
+                            访问地址：http://localhost:8080/webjars/jquery/3.5.1/jquery.js
+ 2.2、欢迎页支持（7.1.6. Welcome Page）
+    两种方式：static 和 template
+
+ 2.3、自定义Favicon
+    favicon:网站地址在最前面出现的一个小图标（以尚硅谷的为例）
+    1.先去network中所有favicon然后找到该name,然后使用其url将图片下载
+    2.将图名命名为favicon.ico
+    3.放在静态资源目录下即可。
+    注意：
+        spring:
+        #  mvc:
+        #    static-path-pattern: /res/**   静态资源访问前缀会导致 Favicon 功能失效
+
+ 2.4、静态资源配置原理
+     ● SpringBoot启动默认加载  xxxAutoConfiguration 类（自动配置类）
+     ● SpringMVC功能的自动配置类 WebMvcAutoConfiguration，生效（进入类中，通过条件注解看看其是否生效）
+    spring-boot-autoconfigure-2.4.13.jar!\org\springframework\boot\autoconfigure\web\servlet\WebMvcAutoConfiguration.class
+     ● 因为其生效，我们往下看给容器中配了什么。
+        a. hiddenHttpMethodFilter
+        b. formContentFilter
+        c.  @Configuration(proxyBeanMethods = false)
+           	@Import(EnableWebMvcConfiguration.class)
+           	@EnableConfigurationProperties({ WebMvcProperties.class,
+           			org.springframework.boot.autoconfigure.web.ResourceProperties.class, WebProperties.class })
+           	@Order(0)
+           	public static class WebMvcAutoConfigurationAdapter implements WebMvcConfigurer, ServletContextAware {
+          配置文件的相关属性和xxx进行了绑定(EnableConfigurationProperties)。
+                WebMvcProperties==spring.mvc、
+                ResourceProperties==spring.resources
+
+    1、配置类只有一个有参构造器（上面的WebMvcAutoConfigurationAdapter就是只有一个有参构造器）
+        特点：
+            - 有参构造器所有参数的值都会从容器中确定
+              有参构造器的代码：
+                //1.ResourceProperties resourceProperties；     获取和spring.resources绑定的所有的值的对象
+                //2.WebMvcProperties mvcProperties              获取和spring.mvc绑定的所有的值的对象
+                //3.ListableBeanFactory beanFactory             Spring的beanFactory（相当于寻找ioc容器）
+                //HttpMessageConverters                         找到所有的HttpMessageConverters
+                //ResourceHandlerRegistrationCustomizer         找到 资源处理器的自定义器。=========
+                //DispatcherServletPath
+                //ServletRegistrationBean                       给应用注册Servlet、Filter....
+                public WebMvcAutoConfigurationAdapter(
+                    org.springframework.boot.autoconfigure.web.ResourceProperties resourceProperties,
+                    WebProperties webProperties,
+                    WebMvcProperties mvcProperties,
+                    ListableBeanFactory beanFactory,
+                    ObjectProvider<HttpMessageConverters> messageConvertersProvider,
+                    ObjectProvider<ResourceHandlerRegistrationCustomizer> resourceHandlerRegistrationCustomizerProvider,
+                    ObjectProvider<DispatcherServletPath> dispatcherServletPath,
+                    ObjectProvider<ServletRegistrationBean<?>> servletRegistrations) {
+
+    2、资源处理的默认规则
+            我们在WebMvcAutoConfigurationAdapter中找到重写的addResourceHandlers方法
+            @Override
+            public void addResourceHandlers(ResourceHandlerRegistry registry) {
+                if (!this.resourceProperties.isAddMappings()) {      //1.看看addMappings的值（true/false）
+                        //addMappings为  true不能进来，fasle则可以进来
+                    logger.debug("Default resource handling disabled");
+                    return;
+                }
+                //2.addMappings 为fasle则下面的配置就不会生效，则意味所有的静态资源无法访问
+                    //下面两个是重载的方法
+                addResourceHandler(registry, "/webjars/**", "classpath:/META-INF/resources/webjars/");
+                   webjars的规则：registry.hasMappingForPattern(pattern--》"/webjars/**")
+
+                addResourceHandler(registry, this.mvcProperties.getStaticPathPattern(), (registration) -> {
+                    registration.addResourceLocations(this.resourceProperties.getStaticLocations());
+                    if (this.servletContext != null) {
+                        ServletContextResource resource = new ServletContextResource(this.servletContext, SERVLET_LOCATION);
+                        registration.addResourceLocations(resource);
+                    }
+                });
+                静态资源路径的配置规则：首先通过getStaticPathPattern获取staticPathPattern
+                                   但是mvcProperties是和配置文件绑定的形参（默认值是“/**”）（@ConfigurationProperties(prefix = "spring.mvc")
+                                                                        public class WebMvcProperties {
+                addResourceHandler的第三个参数是Customer类型（accept方法）
+                this.resourceProperties.getStaticLocations()拥有默认值：
+                        CLASSPATH_RESOURCE_LOCATIONS：
+                            private static final String[] CLASSPATH_RESOURCE_LOCATIONS = {
+                                                    "classpath:/META-INF/resources/",
+                            				         "classpath:/resources/",
+                            				         "classpath:/static/",
+                            				         "classpath:/public/" };
+                后面的if部分则代表我们自定设置了静态资源的位置
+            }
+            ----------------------------------------
+            spring:
+            #  mvc:
+            #    static-path-pattern: /res/**       这个会导致welcome page功能失效
+              resources:
+                add-mappings: false                 禁用所有静态资源规则
+            ----------------------------------------
+
+    3、欢迎页的处理规则
+        在WebMvcAutoConfiguration下的welcomePageHandlerMapping，由于返回值就是类型WelcomePageHandlerMapping因此我们进入该类构造器中，发现
+                    if (welcomePage != null && "/**".equals(staticPathPattern)) {
+            			logger.info("Adding welcome page: " + welcomePage);
+            			setRootViewName("forward:index.html");
+            这里要求必须是   /** 才可以
+            上面的if如果不能处理，则还有else if交给controller看谁可以处理/index
+        ● 静态资源路径下  index.html
+          ○ 可以配置静态资源路径
+          ○ 但是不可以配置静态资源的访问前缀（static-path-pattern）。否则导致 index.html不能被默认访问
+
+    4、favicon
+----------------------------------------2------------------------------------------
+
+3.请求参数处理（springboot使用springmvc来进行web处理的细节）
+ 0、请求映射（RequestMapping GetMapping等等）
+    1、rest使用与原理（需要引入HiddenHttpMethodFilter）
+        ● a)rest风格支持（使用HTTP请求方式动词来表示对资源的操作）
+          ○ 以前：/getUser   获取用户     /deleteUser 删除用户    /editUser  修改用户       /saveUser 保存用户
+          ○ 现在： /user    GET-获取用户    DELETE-删除用户     PUT-修改用户      POST-保存用户
+          ○ 核心Filter；HiddenHttpMethodFilter
+            (在WebMvcAutoConfiguration中存在方法hiddenHttpMethodFilter，因此rest风格如果满足条件配置是开启的)
+            (因为hiddenHttpMethodFilter方法返回值类型为：OrderedHiddenHttpMethodFilter ，而它又继承了extends HiddenHttpMethodFilter)
+            (我们进入HiddenHttpMethodFilter中，发现public static final String DEFAULT_METHOD_PARAM = "_method";而且我们
+            发现只有当表单是post方式时，doFilterInternal才会去真正提交的methodParam)
+            <input type="hidden" name="_method" value="put等">
+            （观察WebMvcAutoConfiguration中hiddenHttpMethodFilter的条件配置
+                    @Bean
+                    @ConditionalOnMissingBean(HiddenHttpMethodFilter.class)
+                    @ConditionalOnProperty(prefix = "spring.mvc.hiddenmethod.filter", name = "enabled", matchIfMissing = false)
+                    public OrderedHiddenHttpMethodFilter hiddenHttpMethodFilter() {
+                        return new OrderedHiddenHttpMethodFilter();
+                    }
+                上面的@ConditionalOnProperty，说明我们需要手动设置属性spring.mvc.hiddenmethod.filter.enabled=true才可以，系统默认matchIfMissing是关闭的
+                因此 SpringBoot需要手动开启
+            ）
+            ■ 用法：
+                    表单method=post，
+                    隐藏域 _method=put
+            ■ SpringBoot中手动开启
+          ○ 扩展：如何把_method 这个名字换成我们自己喜欢的。
+                我们进入类HiddenHttpMethodFilter发现参数methodParam和常量DEFAULT_METHOD_PARAM=_method
+                    private String methodParam = DEFAULT_METHOD_PARAM;
+                因此我们需在我们的配置类（自定义）设置一个组件Bean(HiddenHttpMethodFilter)并且设置属性methodParam即可
+                    实例：详见config.WebConfig.java
+                                @Configuration(proxyBeanMethods = false)
+                                public class WebConfig {
+                                    @Bean
+                                    public HiddenHttpMethodFilter hiddenHttpMethodFilter(){
+                                        HiddenHttpMethodFilter hiddenHttpMethodFilter = new HiddenHttpMethodFilter();
+                                        hiddenHttpMethodFilter.setMethodParam("_m");
+                                        return hiddenHttpMethodFilter;
+                                    }
+                                }
+        ● b)Rest原理（表单提交要使用REST的时候）
+            ● 表单提交会带上_method=PUT
+            ● 请求过来被HiddenHttpMethodFilter-->doFilterInternal拦截
+              ○ 请求是否正常，并且是POST
+                ■ 获取到_method的值。
+                ■ 兼容以下请求；PUT.DELETE.PATCH
+                ■ 原生request（post），包装模式requesWrapper重写了getMethod方法，返回的是传入的值。
+                    OrderedHiddenHttpMethodFilter extends HiddenHttpMethodFilter-->doFilterInternal
+                    HttpMethodRequestWrapper extends HttpServletRequestWrapper
+                    - HttpServletRequestWrapper extends ServletRequestWrapper
+                    - HttpServletRequestWrapper implements HttpServletRequest(有一个getMethod方法)
+                ■ 过滤器链放行的时候用wrapper。以后的方法调用getMethod是调用requesWrapper的。
+                    通过过滤器后，我们在controller的注解RequestMappring中的method参数就可以设置put，delete等
+        ● c)Rest使用客户端工具，
+            ○ 如PostMan直接发送Put、delete等方式请求，无需Filter。
+
+    2、请求映射原理
+        ● SpringMVC功能分析都从 org.springframework.web.servlet.DispatcherServlet-》doDispatch（）
+         解释：
+            - HttpServlet:(doGet等)
+              - HttpServletBean（没有重写doGet等）
+                - FrameworkServlet（重写了HttpServlet的doGet等,-->processRequest方法）
+                （processRequest方法前半部分都是初始化，后半部分：doService是核心，但是在这是抽象方法）
+                  - DispatcherServlet（重写doService方法）
+                    doService前半部分都是set、get等初始化过程，我们往后看：
+                            doDispatch(request, response);
+                      doDispatch就是“做转发”
+                        在该方法中我们通过getHandler获取谁（controller中的方法）能够处理浏览器发送的请求
+                        进入getHandler方法，有一个参数：
+                            List<HandlerMapping> handlerMappings处理器映射（/*** ---> xxx ）
+                            此时其长度为5，其中第一个名字为：
+                                RequestMappingHandlerMapping：保存了所有@RequestMapping 和handler的映射规则。
+                                （其他四个：
+                                    WelcomePageHandlerMapping  首页映射
+                                    BeanNameUrlHandlerMapping
+                                    RouterFunctionMapping
+                                    SimpleUrHandlerMapping
+                                    ）
+                                 进入RequestMappingHandlerMapping，有一个getHandler
+	                                (DispatcherServlet类的1258行)protected HandlerExecutionChain getHandler(HttpServletRequest request) throws Exception {
+                                                遍历handlerMappings然后进行：HandlerExecutionChain handler = mapping.getHandler(request);
+                                    (AbstractHandlerMapping抽象类的497行)
+                                        @Override
+                                        @Nullable
+                                        public final HandlerExecutionChain getHandler(HttpServletRequest request) throws Exception {
+                                            Object handler = getHandlerInternal(request);
+                                            我们进入getHandlerInternal方法（属于RequestMappingInfoHandlerMapping抽象类）
+                                                return super.getHandlerInternal(request);
+
+                                                @Override
+                                                @Nullable
+                                            	 protected HandlerMethod getHandlerInternal(HttpServletRequest request) throws Exception {
+                                            	    先获取lookupPath的值：这里是 /user
+                                            	     String lookupPath = initLookupPath(request);
+                                                    this.mappingRegistry.acquireReadLock();  //使用并发时
+                                                    try {
+                                                        HandlerMethod handlerMethod = lookupHandlerMethod(lookupPath, request);
+                                                        return (handlerMethod != null ? handlerMethod.createWithResolvedBean() : null);
+                                                    }
+                                                    finally {
+                                                        this.mappingRegistry.releaseReadLock();
+                                                    }
+                                                }
+                                        我们进入上面出现的lookupHandlerMethod中，
+                                        	List<T> directPathMatches = this.mappingRegistry.getMappingsByDirectPath(lookupPath);
+                                        	通过获取directPathMatches我们得到对应/user中controller的四个方法
+                                        	    如果找到不为空：使用addMatchingMappings将directPathMatches中符合请求方式（get\post等）加入到一个List<Match> matches中去
+                                        	                        addMatchingMappings(directPathMatches, matches, request);
+
+                                        	    接着我们在match列表中获取第一个（认为第一个最匹配，因此此时按照请求路径和方式都过滤完了）：
+                                        	            Match bestMatch = matches.get(0);
+                                        	    但是当我们设置多个可以处理同一个请求的controller,此时：
+                                        	            则报错"Ambiguous handler methods mapped for '" + uri + "': {" + m1 + ", " + m2 + "}");
+         ctrl+F12可以查看类所有元素
+        ● 所有的请求映射都在HandlerMapping中。
+            ○ SpringBoot自动配置欢迎页的 WelcomePageHandlerMapping 。访问 /能访问到index.html；
+            ○ SpringBoot自动配置了默认 的 RequestMappingHandlerMapping（就会将我们controller中标注RequestMapping的方法全部解析）
+            ○ 请求进来，挨个尝试所有的HandlerMapping看是否有请求信息。
+              ■ 如果有就找到这个请求对应的handler
+              ■ 如果没有就是下一个 HandlerMapping
+            ○ 我们需要一些自定义的映射处理，我们也可以自己给容器中放HandlerMapping。自定义 HandlerMapping
+
+ 1、普通参数与基本注解
+    1.1、注解：
+        @PathVariable（路径变量）
+        @RequestHeader （获取请求头）
+        @RequestParam("xxx")（获取请求参数）（从请求参数拿到xxx给方法的参数赋值    ）
+        @CookieValue （获取cookie值）
+        @RequestBody （ （获取请求体[post]）
+
+        @RequestAttribute （获取reguest域属性）(等同于HttpServletRequest对象.getAttribute("名字"))
+        @MatrixVariable(value="html中设置的请求路径中的东西",pathVar="controller方法中对应请求路径的路径变量") （矩阵变量）（需要结合路径变量的方式即：{}）
+
+        -------------------------------------------------------------------------------
+        实例：
+            @GetMapping("car/{id}/owner/{username}")
+                public Map<String,Object> getCar(@PathVariable("id") Integer id,
+                                                 @PathVariable("username") String name,
+                                                 @PathVariable Map<String,String> pv,
+
+                                                 @RequestHeader("User-Agent") String requestHeader,//获取指定的请求头
+                                                 @RequestHeader Map<String,String> header, //获取所有的请求头
+
+                                                 @RequestParam("age") Integer age, //从请求中获取？后的参数值(?是在html中加上的)
+                                                 //href="/car/3/owner/zhangsan?age=18&inters=lanqiu&inters=zuqiu"
+                                                 @RequestParam("inters") List<String> inters,
+                                                 @RequestParam Map<String,String> param,//得到所有的请求参数
+                                                 @CookieValue("_ga") String ga,
+                                                 @CookieValue("_ga") Cookie cookie
+                                                 ){
+                    //参数：@PathVariable Map<String,String> pv代表将请求路径所有的路径变量放在一个map中
+                ------------------------------------------------------------------------------
+                        <form method="post" action="/save">
+                            name:<input name="name">
+                            age:<input name="age">
+                            <input type="submit" value="提交">
+                        </form>
+                        @PostMapping("/save")
+                        public Map save(@RequestBody String content){
+                            HashMap<String, Object> m = new HashMap<>();
+                            m.put("content", content);
+                            return m;
+                        }
+                        -------------------------------------------------------
+                        <form method="post" action="/savePerson">
+                                name:<input name="name">
+                                age:<input name="age">
+                                <input type="submit" value="提交">
+                            </form>
+                        @PostMapping("/savePerson")
+                        public String savePerson(Person person){
+                            System.out.println(person);
+                            return "123";
+                        }
+        -------------------------------------------------------------------------------
+                @GetMapping("/goto")
+                public String goToPage(HttpServletRequest request){
+
+                    request.setAttribute("msg","成功了...");
+                    request.setAttribute("code",200);
+                    return "forward:/success";  //转发到  /success请求
+                }
+                @ResponseBody   //表示返回值是返回给服务器的不是页面转发功能
+                @GetMapping("/success")
+                public Map success(@RequestAttribute(value = "msg",required = false) String msg,
+                                   @RequestAttribute(value = "code",required = false)Integer code,
+                                   HttpServletRequest request){
+                    Object msg1 = request.getAttribute("msg");
+         -------------------------------------------------------------------------------
+         矩阵变量：
+             /cars/{path}?xxx=xxx&aaa=ccc queryString       查询字符串。@RequestParam；<br/>
+             /cars/sell;low=34;brand=byd,audi,yd            ；矩阵变量 <br/>
+
+            1.页面开发，cookie禁用了，session里面的内容怎么使用；
+                session.set(a,b)---> jsessionid ---> cookie ----> 每次发请求携带。
+                url重写：/abc;jsesssionid=xxxx                 把cookie的值使用矩阵变量的方式进行传递.
+            2.SpringBoot默认是禁用了矩阵变量的功能
+             手动开启：原理（去WebMvcAutoConfiguration中看configurePathMatch方法
+                            其内部有一个UrlPathHelper，我们进入该类中看见一个属性removeSemicolonContent（移除分号内容）默认为true，这就是）。
+                            即将请求路径分号后的东西就截掉了，所有矩阵变量就不能生效
+                            因此我们需要定制化配置（修改默认配置）（SpringMVC自动配置概览下面的三种方式：）
+                                使用 @Configuration + WebMvcConfigurer 自定义规则
+                                声明 WebMvcRegistrations 改变默认底层组件
+                                使用 @EnableWebMvc+@Configuration+DelegatingWebMvcConfiguration 全面接管SpringMVC
+                        总结：
+                            对于路径的处理。都是UrlPathHelper进行解析。
+                            UrlPathHelper的属性removeSemicolonContent为false则（移除分号内容）支持矩阵变量的
+             两种方式：
+                方式1：让我们自己的配置类（@Configuration）实现接口WebMvcConfigurer，并且重写方法configurePathMatch
+                        public void configurePathMatch(PathMatchConfigurer configurer) {
+
+                            UrlPathHelper urlPathHelper = new UrlPathHelper();
+                            // 不移除；后面的内容。矩阵变量功能就可以生效
+                            urlPathHelper.setRemoveSemicolonContent(false);
+                            configurer.setUrlPathHelper(urlPathHelper);
+                        }
+                方式2：我们在容器注册组件webMvcConfigurer
+                    @Bean
+                    public WebMvcConfigurer webMvcConfigurer() {
+                        return new WebMvcConfigurer() {
+                            @Override
+                            public void configurePathMatch(PathMatchConfigurer configurer) {
+                                UrlPathHelper urlPathHelper = new UrlPathHelper();
+                                // 不移除；后面的内容。矩阵变量功能就可以生效
+                                urlPathHelper.setRemoveSemicolonContent(false);
+                                configurer.setUrlPathHelper(urlPathHelper);
+                            }
+                        };
+                    }
+            3.使用：
+                - 矩阵变量必须有url路径变量才能被解析
+                    <a href="/cars/sell;low=34;brand=byd,audi,yd">@MatrixVariable（矩阵变量）</a>
+                    <a href="/cars/sell;low=34;brand=byd;brand=audi;brand=yd">@MatrixVariable（矩阵变量）</a>
+                    <a href="/boss/1;age=20/2;age=10">@MatrixVariable（矩阵变量）/boss/{bossId}/{empId}</a>
+                        最后这个a中有两个age，如果我们不设置pathVar属性，则默认都是获取第一个age的值
+                    ----------------------------------------------------------------
+                    1：
+                    @GetMapping("/cars/{path}")
+                    public Map carsSell(@MatrixVariable("low") Integer low,
+                                        @MatrixVariable("brand") List<String> brand,
+                                        @PathVariable("path") String path){
+                        Map<String,Object> map = new HashMap<>();
+
+                        map.put("low",low);
+                        map.put("brand",brand);
+                        map.put("path",path);
+                        return map;
+                    }
+                    ----------------------------------------------------------------
+                    2.
+                    // /boss/1;age=20/2;age=10
+
+                    @GetMapping("/boss/{bossId}/{empId}")
+                    public Map boss(@MatrixVariable(value = "age",pathVar = "bossId") Integer bossAge,
+                                    @MatrixVariable(value = "age",pathVar = "empId") Integer empAge){
+                        Map<String,Object> map = new HashMap<>();
+
+                        map.put("bossAge",bossAge);
+                        map.put("empAge",empAge);
+                        return map;
+
+                    }
+-------------------------------------------------------------------------------
+    1.2、Servlet API:
+        WebRequest、ServletRequest、MultipartRequest、 HttpSession、
+        javax.servlet.http.PushBuilder、Principal、InputStream、Reader、
+        HttpMethod、Locale、TimeZone、ZoneId
+
+    1.3、复杂参数：
+        Map、Model（map、model里面的数据会被放在request的请求域  request.setAttribute）、
+        Errors/BindingResult、
+        RedirectAttributes（ 重定向携带数据）、
+        ServletResponse（response）、
+        SessionStatus、
+        UriComponentsBuilder、
+        ServletUriComponentsBuilder
+
+    1.4、自定义对象参数：（就是前端表单提交pojo类的所有属性，然后controller直接将其作为对应的pojo类接收并作为handle的参数）
+        可以自动类型转换与格式化，可以级联封装
+            <form action="/saveuser" method="post">
+                姓名： <input name="userName" value="zhangsan"/> <br/>
+                年龄： <input name="age" value="18"/> <br/>
+                生日： <input name="birth" value="2019/12/10"/> <br/>
+                宠物姓名：<input name="pet.name" value="阿猫"/><br/>
+                宠物年龄：<input name="pet.age" value="5"/>
+                <input type="submit" value="保存"/>
+            </form>
+            ------------------------------------------------------------
+            <form method="post" action="/savePerson">
+                    name:<input name="name">
+                    age:<input name="age">
+                    <input type="submit" value="提交">
+                </form>
+            @PostMapping("/savePerson")
+            public Person savePerson(Person person){
+                System.out.println(person);
+                return person;
+            }
+        --------------------------------------------------
+    原理：
+
+ 2、POJO封装过程
+    自定义pojo类的参数是由ServletModelAttributeMethodProcessor参数处理器支持的
+ 3、参数处理原理
+    从DispatcherServlet入手（doDispatch）
+    1、HandlerAdapter
+        ● HandlerMapping中找到能处理请求的Handler（getHandler）Controller.method()）
+        ● 为当前Handler 找一个适配器 HandlerAdapter（getHandlerAdapter）；RequestMappingHandlerAdapter
+                    HandlerAdapter ha = getHandlerAdapter(mappedHandler.getHandler());
+            我们进入getHandlerAdapter内部
+                	protected HandlerAdapter getHandlerAdapter(Object handler) throws ServletException {
+                	handlerAdapters参数的值有一下四个：
+                            RequestMappingHandlerAdapter    0 - 支持方法上标注@RequestMapping
+                            HandlerFunctionAdapter          1 - 支持函数式编程的
+                            HttpRequestHandlerAdapter
+                            SimpleControllerHandlerAdapter
+        ● 适配器执行目标方法并确定方法参数的每一个值
+                    mv = ha.handle(processedRequest, response, mappedHandler.getHandler()); 真正的执行handle
+                    - mappedHandler.getHandler()就是看看我们controller可以处理请求的那个方法就是handle
+                    执行目标方法
+    2、执行目标方法（invokeHandlerMethod）
+        DispatcherServlet -- doDispatch中的ha.handle
+        我们进入handle中	（类AbstractHandlerMethodAdapter中）
+            handle中有：
+                return handleInternal(request, response, (HandlerMethod) handler);
+            我们进入方法handleInternal内部（类RequestMappingHandlerAdapter）:
+                // No synchronization on session demanded at all...
+                mav = invokeHandlerMethod(request, response, handlerMethod);
+                invokeHandlerMethod可翻译为：执行handle的方法
+                    我们进入invokeHandlerMethod内部：
+                        有一个属性：argumentResolvers参数解析器（有26个）
+    3、参数解析器HandlerMethodArgumentResolver
+        if (this.argumentResolvers != null) {
+            invocableMethod.setHandlerMethodArgumentResolvers(this.argumentResolvers);
+        确定将要执行的目标方法的每一个参数的值是什么;
+        SpringMVC目标方法能写多少种参数类型。取决于参数解析器。
+        （我们可以通过argumentResolvers去看其类HandlerMethodArgumentResolverComposite，
+        其中有一个属性：
+            private final List<HandlerMethodArgumentResolver> argumentResolvers = new ArrayList<>();
+            我们可以进入HandlerMethodArgumentResolver中去看看这个接口，其有两个方法：
+                boolean supportsParameter， ● 当前解析器是否支持解析这种参数
+                Object resolveArgument      ● 支持就调用 resolveArgument
+        ）
+    4、返回值处理器（15种）
+        即我们controller对应的这些handle的返回值种类
+        if (this.returnValueHandlers != null) {
+            invocableMethod.setHandlerMethodReturnValueHandlers(this.returnValueHandlers);
+    			}
+    在将3获取的参数解析器和4获取的返回值处理器都放在--对象：ServletInvocableHandlerMethod invocableMethod
+    往下执行一个重要的代码：
+        invocableMethod.invokeAndHandle(webRequest, mavContainer);
+        我们进入invokeAndHandle（类ServletInvocableHandlerMethod）中：
+                a.Object returnValue = invokeForRequest(webRequest, mavContainer, providedArgs); //执行方法请求
+                b.setResponseStatus(webRequest);
+                在完成a后，这是会调到我们controller对应的方法即handler
+                然后才执行b
+                这意味相比上面的2中，这里才是真正的执行目标方法（我们的方法）
+          --------------
+          进一步分析：我们进入invokeForRequest（类InvocableHandlerMethod）方法内部：
+            a)getMethodArgumentValues获取方法的所有参数的值
+                这将我们从前端浏览器传输的参数已经为我们controller对应的handle的方法的参数赋值了
+
+    5、如何确定目标方法每一个参数的值（getMethodArgumentValues方法）
+        5.1、挨个判断所有参数解析器哪个支持解析这个参数
+        5.2、解析这个参数的值（调用各自 HandlerMethodArgumentResolver 的 resolveArgument 方法即可）
+        5.3、自定义类型参数 封装POJO
+            ServletModelAttributeMethodProcessor  这个参数处理器支持我们自定义的pojo类参数
+
+            是否为简单类型。
+            如果不是，创建一个空的pojo类实例
+            web数据绑定器（将pojo类对象与页面的数据进行绑定）：
+             WebDataBinder binder = binderFactory.createBinder(webRequest, attribute, name);
+             WebDataBinder :web数据绑定器，将请求参数的值绑定到指定的JavaBean里面
+             WebDataBinder 利用它里面的 Converters （124个转换方式）将请求数据转成指定的数据类型。再次封装到JavaBean中
+
+             GenericConversionService：在设置每一个值的时候，找它里面的所有converter那个可以将这个数据类型（request带来参数的字符串）转换到指定的类型（JavaBean -- Integer）
+             byte -- > file
+             @FunctionalInterfacepublic interface Converter<S, T>
+
+             未来我们可以给WebDataBinder里面放自己的Converter；
+                 private static final class StringToNumber<T extends Number> implements Converter<String, T>
+
+        5.4自定义 Converter
+             <form action="/saveuser" method="post">
+                            姓名： <input name="userName" value="zhangsan"/> <br/>
+                            年龄： <input name="age" value="18"/> <br/>
+                            生日： <input name="birth" value="2019/12/10"/> <br/>
+                            宠物： <input name="pet" value="啊猫,3"/>
+                            <input type="submit" value="保存"/>
+             </form>
+             如上：我们可以设置一个自定义的Converter，实现
+                        宠物姓名：<input name="pet.name" value="阿猫"/><br/>
+                        宠物年龄：<input name="pet.age" value="5"/>
+                 到（不用级联的方式）：
+                        宠物： <input name="pet" value="啊猫,3"/>
+
+            我们需要设置（接收的提交信息以逗号风格，第一个为name属性值，第二个为age属性值）
+                即重写WebMvcConfigurer的addFormatters，
+                    （该方法可以增加一些格式化器和类型转换器）
+              //1、WebMvcConfigurer定制化SpringMVC的功能
+                 @Bean
+                 public WebMvcConfigurer webMvcConfigurer(){
+                     return new WebMvcConfigurer() {
+                         @Override
+                         public void configurePathMatch(PathMatchConfigurer configurer) {
+                             UrlPathHelper urlPathHelper = new UrlPathHelper();
+                             // 不移除；后面的内容。矩阵变量功能就可以生效
+                             urlPathHelper.setRemoveSemicolonContent(false);
+                             configurer.setUrlPathHelper(urlPathHelper);
+                         }
+
+                         @Override
+                         public void addFormatters(FormatterRegistry registry) {
+                             registry.addConverter(new Converter<String, Pet>() {
+
+                                 @Override
+                                 public Pet convert(String source) {
+                                     // source就是页面提交的值：啊猫,3
+                                     if(!StringUtils.isEmpty(source)){
+                                         Pet pet = new Pet();
+                                         String[] split = source.split(",");
+                                         pet.setName(split[0]);
+                                         pet.setAge(Integer.parseInt(split[1]));
+                                         return pet;
+                                     }
+                                     return null;
+                                 }
+                             });
+                         }
+                     };
+                 }
+    6、目标方法执行完成
+        将所有的数据都放在 ModelAndViewContainer；包含要去的页面地址View。还包含Model数据。
+    7、处理派发结果
+        processDispatchResult(processedRequest, response, mappedHandler, mv, dispatchException);
+        renderMergedOutputModel(mergedModel, getRequestToExpose(request), response);
+----------------------------------------3------------------------------------------
+
+4.数据响应与内容协商
+ 1、响应SON(服务器响应浏览器的请求)
+    1.1.jackson.jar+@ResponseBody
+        - 必须引入web场景spring-boot-starter-web
+            其会自动引入json场景spring-boot-starter-json
+                json内部主要依赖jackson
+                            jackson-databind
+                            jackson-datatype-jdk8
+                            jackson-datatype-jsr310
+                            jackson-module-parameter-names
+        给前端自动返回json数据；
+        1、返回值解析器
+            @Controller
+            public class ResponseTestController {
+                @ResponseBody                  //利用返回值处理器内的消息转换器MessageConverter进行处理
+                @GetMapping("/test/getPerson")
+                public Person getPerson(){
+                    Person xx = new Person("xx", 1,new Son("ss",0));
+                    return xx;
+                }
+            }
+        2、返回值解析器原理
+            在之前我们在牵扯到结果处理器（returmValueHandles（默认15个））
+            ● 1、返回值处理器判断是否支持这种类型返回值 supportsReturnType
+            ● 2、返回值处理器调用 handleReturnValue 进行处理
+            ● 3、RequestResponseBodyMethodProcessor 可以处理返回值标了@ResponseBody 注解的。
+              ○ 1.  利用 MessageConverters 进行处理 将数据写为json
+                ■ 1、内容协商（浏览器默认会以请求头的方式告诉服务器他能接受什么样的内容类型）
+                ■ 2、服务器最终根据自己自身的能力，决定服务器能生产出什么样内容类型的数据，
+                ■ 3、SpringMVC会挨个遍历所有容器底层的 HttpMessageConverter ，看谁能处理？
+                  ● 1、得到MappingJackson2HttpMessageConverter可以将对象写为json
+                  ● 2、利用MappingJackson2HttpMessageConverter将对象转为json再写出去。
+    1.2、SpringMVC到底支持哪些返回值
+        ModelAndView
+        Model
+        View
+        ResponseEntity
+        ResponseBodyEmitter
+        StreamingResponseBody
+        HttpEntity
+        HttpHeaders
+        Callable
+        DeferredResult
+        ListenableFuture
+        CompletionStage
+        WebAsyncTask
+        有 @ModelAttribute 且为对象类型的
+        @ResponseBody 注解 ---> RequestResponseBodyMethodProcessor；
+
+    1.3、HTTPMessageConverter原理（返回值如何转换为json对象）
+            ·1、返回值处理器判断是否支持这种类型返回值supportsReturnType
+            ·2、返回值处理器调用handleReturnValue进行处理
+            ·3、RequestResponseBodyMethodProcessor可以处理返回值标了@ResponseBody注解的。
+                1.利用MessageConverters进行处理将数据写为json
+                   1、内容协商（浏览器默认会以请求头的方式告诉服务器他能接受什么样的内容类型）
+                   2、服务器最终根据自己自身的能力，决定服务器能生产出什么样内容类型的数据，
+                   3、SpringMVC会挨个遍历所有容器底层的HttpMessageConverter,看谁能处理？
+                        1、得到MappingJackson2 HttpMessageConverter可以将对象写为json
+                        2、利用MappingJackson2 HttpMessageConverter将对象转为json再写出去。
+
+        1、MessageConverter规范
+            HttpMessageConverter: 看是否支持将 此 Class类型的对象，转为MediaType类型的数据。
+            例子：Person对象转为JSON。或者 JSON转为Person
+        2、默认的MessageConverter（10个）
+            0 ByteArrayHttpMessageConverter           只支持Byte类型的
+            1 StringHttpMessageConverter              String
+            2 StringHttpMessageConverter              String
+            3 ResourceHttpMessageConverter            Resource
+            4 ResourceRegionHttpMessageConverter      ResourceRegion
+            5 SourceHttpMessageConverter              DOMSource.class \ SAXSource.class) \ StAXSource.class \StreamSource.class \Source.class
+            6 AllEncompassingFormHttpMessageConverter MultiValueMap
+            7 Mapping Jackson2HttpMessageConverter    true
+            8 Mapping Jackson2HttpMessageConverter    true
+            9 Jaxb2RootElementHttnMessageConverter   支持注解方式xml处理的
+
+            最终 MappingJackson2HttpMessageConverter  把对象转为JSON（利用底层的jackson的objectMapper转换的）
+
+ 2、内容协商（根据客户端接收能力不同，返回不同媒体类型的数据。）
+ 比如：实现针对浏览器我们返回json，针对安卓我们 返回xml,哦们并不需要两个方法，只需要内容协商即可
+
+    1、引入xml依赖（jackson-dataformat-xml，因为我们需要返回xml数据时需要使用这个依赖）
+        <dependency>
+            <groupId>com.fasterxml.jackson.dataformat</groupId>
+            <artifactId>jackson-dataformat-xml</artifactId>
+        </dependency>
+
+        在浏览器的request header中：
+            Accept：text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8
+            accept说明浏览器可以接收的数据类型，其中xml优先
+        response header中:
+            Content-Type:application/xhtml+xml
+    2、postman分别测试返回json和xml
+                只需要改变请求头中Accept字段。Http协议中规定的，告诉服务器本客户端可以接收的数据类型。
+
+    3、开启浏览器参数方式内容协商功能
+        1.为了方便内容协商，开启基于请求参数的内容协商功能。
+            spring:
+                contentnegotiation:
+                  favor-parameter: true  #开启请求参数内容协商模式
+        2.发请求： http://localhost:8080/test/person?format=json
+                  http://localhost:8080/test/person?format=xml
+                如果我们浏览器还想接收其他类型的数据，哦们需要自定义 内容协商管理器
+        3.确定客户端接收什么样的内容类型；
+            1、Parameter策略优先
+                确定是要返回format的值例如：json数据（获取请求头中的format的值）
+            2、最终进行内容协商返回给客户端json即可。
+    4、内容协商原理
+        ● 1、判断`当前响应头`中是否已经有确定的媒体类型。MediaType
+        ● 2、getAcceptableMediaTypes获取客户端（PostMan、浏览器）支持接收的内容类型。（获取客户端Accept请求头字段）【application/xml】
+                ○ contentNegotiationManager 内容协商管理器 默认使用基于请求头的策略
+                ○ HeaderContentNegotiationStrategy  确定客户端可以接收的内容类型
+        ● 2.2、getProducibleMediaTypes获取服务器能产生的媒体类型
+            在这个方法内部将拿到所有的MessageConverter
+        ● 3、遍历循环所有当前系统的 MessageConverter，看谁支持操作这个对象（Person）
+             可能存在多个可以操作该对象的converter
+        ● 4、找到支持操作Person的converter，把converter支持的媒体类型统计出来。
+        ● 5、客户端需要【application/xml】。服务端能力【10种包括：json、xml】
+        ● 6、进行·内容协商·的`最佳匹配`媒体类型(mediaTypeToUse)
+        ● 7、用 支持 将对象转为 最佳匹配媒体类型 的converter。调用它进行转化
+
+
+
+    5、自定义 MessageConverter
+        实现多协议数据兼容。json、xml、x-guigu
+        0、@ResponseBody 响应数据出去 调用 RequestResponseBodyMethodProcessor 处理
+        1、Processor 处理方法返回值。通过 MessageConverter 处理
+        2、所有 MessageConverter 合起来可以支持各种媒体类型数据的操作（读、写）
+        3、内容协商找到最终的 messageConverter；
+        ------------------------------------------------------
+        实验1：
+            /**
+                 * 1、浏览器发请求直接返回 xml    [application/xml]        jacksonXmlConverter
+                 * 2、如果是ajax请求 返回 json   [application/json]      jacksonJsonConverter
+                 * 3、如果硅谷app发请求，返回自定义协议数据  [appliaction/x-guigu]   xxxxConverter
+                 *         我们自定义的格式：属性值1;属性值2;
+                 *
+                 * 步骤：
+                 * 1、添加自定义的MessageConverter进系统底层
+                 * 2、系统底层就会统计出所有MessageConverter能操作哪些类型
+                 * 3、客户端内容协商 [guigu--->guigu]
+                 *
+                 * 分析1：如何将我们自定义的Converter往我们的系统中加，
+                            去WebMvcAutoConfiguration中：
+                            public static class WebMvcAutoConfigurationAdapter implements WebMvcConfigurer, ServletContextAware
+                                有一个configureMessageConverters方法
+                                public void configureMessageConverters(List<HttpMessageConverter<?>> converters) {
+                                			this.messageConvertersProvider
+                                					.ifAvailable((customConverters) -> converters.addAll(customConverters.getConverters()));
+                                		}
+                               我们进入getConverters方法中，之后发现其获取的是HttpMessageConverters类的属性：
+                                private final List<HttpMessageConverter<?>> converters;
+                                我们进一步发现其在该类创建对象时使用对应的构造函数时将一些默认的converter赋给这个属性：
+                                    public HttpMessageConverters(boolean addDefaultConverters, Collection<HttpMessageConverter<?>> converters) {
+                                    		List<HttpMessageConverter<?>> combined = getCombinedConverters(converters,
+                                    				addDefaultConverters ? getDefaultConverters() : Collections.emptyList());
+                                    		combined = postProcessConverters(combined);
+                                    		this.converters = Collections.unmodifiableList(combined);
+                                    	}
+                                 我们进入getDefaultConverters方法内部查看默认的Converters:
+                                   再进入defaultMessageConverters()中
+                                        再进入getMessageConverters()
+                                            再进入addDefaultHttpMessageConverters
+                                                这里面就是默认的所有的converter:ByteArrayHttpMessageConverter、等等
+                                                其内部还有一段：
+                                                    以下代码说明：如果我们导入了jackson的xml的处理（前提），则在加入以上默认的converter的同时，也将xml的converter即：MappingJackson2XmlHttpMessageConverter
+                                                        if (!shouldIgnoreXml) {
+                                                        			if (jackson2XmlPresent) {
+                                                        				Jackson2ObjectMapperBuilder builder = Jackson2ObjectMapperBuilder.xml();
+                                                        				if (this.applicationContext != null) {
+                                                        					builder.applicationContext(this.applicationContext);
+                                                        				}
+                                                        				messageConverters.add(new MappingJackson2XmlHttpMessageConverter(builder.build()));
+                                                        			}
+                                                        			else if (jaxb2Present) {
+                                                        				messageConverters.add(new Jaxb2RootElementHttpMessageConverter());
+                                                        			}
+                                                        		}
+                                                        我们进入jackson2XmlPresent（前提）中，我们找到该属性，并且看到下面有一段static代码：
+                                                            static {
+                                                            		...
+                                                            		jackson2XmlPresent = ClassUtils.isPresent("com.fasterxml.jackson.dataformat.xml.XmlMapper", classLoader);
+                                                            		    静态判断：使用类工具看我们系统中导入该类就可。
+                                                            		...
+                                                            	}
+
+                            以上解释了为什么导入了jackson处理xml的包，xml的converter就会自动进来
+
+                 */
+        分析2：
+            定制springmvc
+                SpringMVC的什么功能。一个入口给容器中添加一个  WebMvcConfigurer（通过配置类）
+                我们去WebMvcConfigurer接口中寻找相关的方法
+                    - configureMessageConverters（会覆盖默认的配置）
+                    - extendMessageConverters（添加额外的配置）   -----》用这个
+
+              @Bean
+                 public WebMvcConfigurer webMvcConfigurer(){
+                     return new WebMvcConfigurer() {
+
+                         @Override
+                         public void extendMessageConverters(List<HttpMessageConverter<?>> converters) {
+
+                         }
+                     }
+                 }
+        实验开始：
+            步骤1：创建我们自定义的MessageConverter(包：converter下)
+                    GuiguMessageConverter (继承HttpMessageConverter<Person>，然后把必须重写的方法重写)
+
+                    /**
+                     * 自定义的Converter
+                     */
+                    public class GuiguMessageConverter implements HttpMessageConverter<Person> {
+
+                        @Override
+                        public boolean canRead(Class<?> clazz, MediaType mediaType) {
+                            return false;
+                        }
+
+                        @Override
+                        public boolean canWrite(Class<?> clazz, MediaType mediaType) {
+                            return clazz.isAssignableFrom(Person.class);
+                        }
+
+                        /**
+                         * 服务器要统计所有MessageConverter都能写出哪些内容类型
+                         *
+                         * application/x-guigu
+                         * @return
+                         */
+                        @Override
+                        public List<MediaType> getSupportedMediaTypes() {
+                            return MediaType.parseMediaTypes("application/x-guigu（我们自定义的类型）");
+                        }
+
+                        @Override
+                        public Person read(Class<? extends Person> clazz, HttpInputMessage inputMessage) throws IOException, HttpMessageNotReadableException {
+                            return null;
+                        }
+
+                        @Override
+                        public void write(Person person, MediaType contentType, HttpOutputMessage outputMessage) throws IOException, HttpMessageNotWritableException {
+                            //自定义协议数据的格式
+                            String data = person.getUserName()+";"+person.getAge()+";"+person.getBirth();
+
+
+                            //写出去
+                            OutputStream body = outputMessage.getBody();
+                            body.write(data.getBytes());
+                        }
+                    }
+             步骤2：在我们的配置类中加入我们的自定义converter
+                    @Bean
+                     public WebMvcConfigurer webMvcConfigurer(){
+                         return new WebMvcConfigurer() {
+
+                             @Override
+                             public void extendMessageConverters(List<HttpMessageConverter<?>> converters) {
+
+                                converters.add(new GuiguMessageConverter());
+                             }
+                         }
+                     }
+              步骤散：需要postman可以
+        实验2：如何以参数的方式进行内容协商
+            例如：
+                http://localhost:8080/...?format=xml
+                http://localhost:8080/...?format=json
+                http://localhost:8080/...?format=x-guigu(自定义的格式是否可以这样)
+                    在内容协商管理器中，有两个策略（基于参数（需要手动开启）（mediaType默认只有两种：xml或者json）、基于请求头）
+                        此时我们就需要自定义内容协商管理器（自定义springmvc--》WebMvcConfig-->configContentNegotiation）
+                            我们在configContentNegotiation中想基于参数的策略中加入我们自定义的格式
+
+                             @Override
+                            public void configureContentNegotiation(ContentNegotiationConfigurer configurer) {
+                                //Map<String, MediaType> mediaTypes
+                                Map<String, MediaType> mediaTypes = new HashMap<>();
+                                mediaTypes.put("json",MediaType.APPLICATION_JSON);
+                                mediaTypes.put("xml",MediaType.APPLICATION_XML);
+                                mediaTypes.put("gg",MediaType.parseMediaType("application/x-guigu"));
+                                //指定支持解析哪些参数对应的哪些媒体类型
+                                ParameterContentNegotiationStrategy parameterStrategy = new ParameterContentNegotiationStrategy(mediaTypes);
+                //                parameterStrategy.setParameterName("ff");(，默认是format=)
+
+                                HeaderContentNegotiationStrategy headeStrategy = new HeaderContentNegotiationStrategy();
+
+                                configurer.strategies(Arrays.asList(parameterStrategy,headeStrategy));
+                            }
+                    测试：
+                        http://localhost:8080//test/getPerson?format=xj
+
+ 有可能我们添加的自定义的功能会覆盖默认很多功能，导致一些默认的功能失效。(通过debug源码看看)
+ 大家考虑，上述功能除了我们完全自定义外？
+    SpringBoot有没有为我们提供基于配置文件的快速修改媒体类型功能？怎么配置呢？
+        【提示：参照SpringBoot官方文档web开发内容协商章节】
+
+----------------------------------------4------------------------------------------
+
+5.视图解析与模板引擎
+ 1、视图解析（SpringBoot默认不支持 JSP，需要引入第三方模板引擎技术实现页面渲染。）
+             转发
+             重定向
+             自定义视图
+    （官方文档：Using spring boot->starter场景启动器）
+    spring-boot-starter-freemarker：         Starter for building MVC web applications using FreeMarker views
+    spring-boot-starter-groovy-templates：   Starter for building MVC web applications using Groovy Templates views
+    spring-boot-starter-thymeleaf：          Starter for building MVC web applications using Thymeleaf views
+        thymeleaf是服务端的java模板引擎，语法简单，性能不高（如果是需要高并发场景我们需要前后分离，或者选择其他的模板引擎  ）
+    1、视图解析原理流程
+        1、目标方法处理的过程中，所有数据都会被放在 ModelAndViewContainer 里面。包括数据和视图地址
+        2、方法的参数是一个自定义类型对象（从请求参数中确定的），把他重新放在 ModelAndViewContainer
+        3、任何目标方法执行完成以后都会返回 ModelAndView（数据和视图地址）。
+        4、processDispatchResult  处理派发结果（页面改如何响应）
+        ● 1、render(mv, request, response); 进行页面渲染逻辑
+          ○ 1、根据方法的String返回值得到 View 对象【定义了页面的渲染逻辑】
+            ■ 1、所有的视图解析器尝试是否能根据当前返回值得到View对象
+            ■ 2、得到了  redirect:/main.html --> Thymeleaf new RedirectView()
+            ■ 3、ContentNegotiationViewResolver 里面包含了下面所有的视图解析器，内部还是利用下面所有视图解析器得到视图对象。
+            ■ 4、view.render(mv.getModelInternal(), request, response);   视图对象调用自定义的render进行页面渲染工作
+              ● RedirectView 如何渲染【重定向到一个页面】
+              ● 1、获取目标url地址
+              ● 2、response.sendRedirect(encodedURL);
+
+
+        视图解析：
+          ○ 返回值以 forward: 开始： new InternalResourceView(forwardUrl); -->  转发request.getRequestDispatcher(path).forward(request, response);
+          ○ 返回值以 redirect: 开始： new RedirectView() --》 render就是重定向
+          ○ 返回值是普通字符串： new ThymeleafView（）--->
+-------------------------------------------------------------
+         2、模板擎-Thymeleaf
+            1、thymeleaf简个
+            2、基本语法
+                1、表达式
+                2、字面量
+                3、文本操作
+                4、数学运算
+                5、布尔运算
+                6、比较运算
+                7、条件运算
+                8、特殊操作
+            3、设置属性值-th:attr
+            4、迭代
+            5、条件运算
+            6、属性优先级
+         3、thymeleaff使用
+            1、引入Starter
+                            <dependency>
+                                <groupId>org.springframework.boot</groupId>
+                                <artifactId>spring-boot-starter-thymeleaf</artifactId>
+                            </dependency>
+                2、自动配置好了thymeleaf（见：ThymeleafAutoConfiguration）
+                        @Configuration(proxyBeanMethods = false)
+                        @EnableConfigurationProperties(ThymeleafProperties.class)
+                        @ConditionalOnClass({ TemplateMode.class, SpringTemplateEngine.class })
+                        @AutoConfigureAfter({ WebMvcAutoConfiguration.class, WebFluxAutoConfiguration.class })
+                        public class ThymeleafAutoConfiguration { }
+                    自动配好的策略
+                        1、所有thymeleaf的配置值都在 ThymeleafProperties（private final ThymeleafProperties properties;）
+                        2、配置好了模板引擎： SpringTemplateEngine（137行）
+                        3、配好了视图解析器： ThymeleafViewResolver
+                        4、我们只需要直接开发页面
+                        （我们在视图解析器中获取该类的对象ThymeleafProperties）
+                            public static final String DEFAULT_PREFIX = "classpath:/templates/";
+                            public static final String DEFAULT_SUFFIX = ".html";  //xxx.html
+                            ---------------------------------------------------------------------
+                3、页面开发测试：
+
+                    <!DOCTYPE html>
+                    <html lang="en" xmlns:th="http://www.thymeleaf.org">
+                    <head>
+                        <meta charset="UTF-8">
+                        <title>Title</title>
+                    </head>
+                    <body>
+                    <h1 th:text="${msg}">哈哈</h1>
+                    <h2>
+                        <a href="www.atguigu.com" th:href="${link}">去百度</a>  <br/>
+                        <a href="www.atguigu.com" th:href="@{link}">去百度2</a>
+                    </h2>
+                    </body>
+                    </html>
+                4、为项目增加前置路径：
+                        server:
+                          servlet:
+                            context-path: /xj
+
+                           则：http://localhost:8080/xj/view
+    ------------------------------------------------------------------
+        4.web后台管理项目构建
+            见：4-boot-web-admin.txt
+----------------------------------------5------------------------------------------
+6、拦截器(见：4-boot-web-admin.txt)
+    1、HandlerInterceptor接☐
+         * 登录检查
+         * 1、配置好拦截器要拦截哪些请求
+         * 2、把这些配置放在容器中
+    2、配置拦截器
+         * 1、编写一个拦截器实现HandlerInterceptor接口
+         * 2、拦截器注册到容器中（实现WebMvcConfigurer的addInterceptors）
+         * 3、指定拦截规则【如果是拦截所有，静态资源也会被拦截】
+    3、拦载截器原理
+        1、根据当前请求，找到HandlerExecutionChain【可以处理请求的handler以及handler的所有 拦截器】
+        2、先来顺序执行 所有拦截器的 preHandle方法
+        ● 1、如果当前拦截器prehandler返回为true。则执行下一个拦截器的preHandle
+        ● 2、如果当前拦截器返回为false。直接    倒序执行所有已经执行了的拦截器的  afterCompletion；
+        3、如果任何一个拦截器返回false。直接跳出不执行目标方法
+        4、所有拦截器都返回True。执行目标方法
+        5、倒序执行所有拦截器的postHandle方法。
+        6、前面的步骤有任何异常都会直接倒序触发 afterCompletion
+        7、页面成功渲染完成以后，也会倒序触发 afterCompletion
+----------------------------------------6------------------------------------------
+7、文件上传
+    1、页面表单
+    2、文件上传代码
+    3、自动配置原理
+----------------------------------------7------------------------------------------
+
+8、异常处理（高级特性spring-boot-features-
+                    7. Developing Web Applications
+                        7.1. The “Spring Web MVC Framework”
+                            7.1.10. Error Handling）
+ 1、错误处理
+    1、默认规则
+    2、定制错误处理逻辑
+    3、异常处理自动配置原理
+    4、异常处理步骤流程
+----------------------------------------8------------------------------------------
+
+9、Web原生组件注入（Servlet、Filter、Listener）
+                Spring Boot Features
+                    7. Developing Web Applications
+                        7.4. Embedded Servlet Container Support
+                            7.4.1. Servlets, Filters, and listeners
+     在ssm整合阶段，我们是将这些东西配置在web.xml中
+
+    1、使用Servlet API
+    2、使用RegistrationBean
+----------------------------------------9------------------------------------------
+
+10、嵌入式Servlet容器
+    1、切换嵌入式Servlet容器
+    2、定制Servlet容器
+----------------------------------------10------------------------------------------
+
+11、定制化原理
+    1、定制化的常见方式
+    2、原理分析套路
+----------------------------------------11------------------------------------------

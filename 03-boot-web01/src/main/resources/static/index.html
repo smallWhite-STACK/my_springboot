@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+</head>
+<body>
+    <h1>这是首页，欢迎您</h1>
+
+    <form action="/user" method="get">
+        <input value="get" type="submit">
+    </form>
+    <form action="/user" method="post">
+        <input value="post" type="submit">
+    </form>
+    <form action="/user" method="post">
+        <input name="_method" value="put" type="hidden">
+        <input value="put" type="submit">
+    </form>
+    <form action="/user" method="post">
+        <input name="_method" value="delete" type="hidden">
+        <input value="delete" type="submit">
+    </form>
+
+-------------------------------------
+    <a href="/car/3/owner/zhangsan?age=18&inters=lanqiu&inters=zuqiu">car/{id}/owner/{username}</a>
+
+<ul>
+    <li>@PathVariable（路径变量）</li>
+    <li>@RequestHeader （获取请求头）</li>
+    <li>@RequestParam("xxx")（获取请求参数）（从请求参数拿到xxx给方法的参数赋值）</li>
+    <li>@CookieValue （获取cookie值）</li>
+    <li>@RequestAttribute （获取reguest域属性）</li>
+    <li>@RequestBody  （获取请求体）</li>
+    <li>@MatrixVariable （矩阵变量）</li>
+</ul>
+    <form method="post" action="/save">
+        name:<input name="name">
+        age:<input name="age">
+        <input type="submit" value="提交">
+    </form>
+    <!--<form method="post" action="/savePerson">-->
+        <!--name:<input name="name">-->
+        <!--age:<input name="age">-->
+        <!--<input type="submit" value="提交">-->
+    <!--</form>-->
+
+    <!--<form method="post" action="/savePerson">-->
+        <!--name:<input name="name">-->
+        <!--age:<input name="age">-->
+        <!--son.name<input name="son.name" value="erzi">-->
+        <!--son.age<input name="son.age" value="12">-->
+        <!--<input type="submit" value="提交">-->
+    <!--</form>-->
+    <form method="post" action="/savePerson">
+        name:<input name="name">
+        age:<input name="age">
+        son<input name="son" value="erzi,16">
+        <input type="submit" value="提交">
+    </form>
+
+    <a href="/cars/sell;low=34;brand=byd,audi,yd">@MatrixVariable（矩阵变量）</a>
+    <a href="/cars/sell;low=34;brand=byd;brand=audi;brand=yd">@MatrixVariable（矩阵变量）</a>
+    <a href="/boss/1;age=20/2;age=10">@MatrixVariable（矩阵变量）/boss/{bossId}/{empId}</a>
+</body>
+</html>

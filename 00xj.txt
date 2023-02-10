@@ -1,0 +1,32 @@
+1.idea中无法下载源码问题
+原文链接：https://blog.csdn.net/qq_36326332/article/details/113620050
+- 解决方式一：
+    检查自己的maven仓库配置是否存在错误：仓库配置参考：https://maven.aliyun.com/mvn/guide
+
+    <mirror>
+      <id>aliyunmaven</id>
+      <mirrorOf>*</mirrorOf>
+      <name>阿里云公共仓库</name>
+      <url>https://maven.aliyun.com/repository/public</url>
+    </mirror>
+- 解决方式二：
+【检查方式maven正确情况下，再执行本步骤】则在项目下，项目根目录下  或  pom.xml同级目录中执行
+mvn dependency:resolve -Dclassifier=sources
+
+
+2.解决8080端口占用
+    netstat -ano | findstr "8080"
+    taskkill /F /PID 上一步查到的进程ID
+
+3.
+------------------------------------------------------------------------
+request.getRequestURL() 返回全路径
+request.getRequestURI() 返回除去host（域名或者ip）部分的路径
+request.getContextPath() 返回工程名部分，如果工程映射为/，此处返回则为空
+request.getServletPath() 返回除去host和工程名部分的路径
+
+Slf4j的log的info使用：
+    StringBuffer requestURL = request.getRequestURL();
+    log.info("当前拦截的请求是{}",requestURL);
+    第一个参数中的{}就是放第二个参数值的
+------------------------------------------------------------------------

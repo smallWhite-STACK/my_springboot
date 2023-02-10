@@ -1,0 +1,829 @@
+1、SQL
+    1、数据源的自动配置-HikariDataSource
+        1、导入JDBC场景
+        2、分析自动配置
+            1、自动配置的类
+        3、修改配置项
+        4、测试
+    2、使用Druid数据源
+        1、druid官方github地址
+        2、自定义方式
+            1、创建数据源
+            2、StatViewServlet
+            3、StatFilter
+        3、使用官方starter方式
+            1、引入druid-starter
+            2、分析自动配置
+            3、配置示例
+    3、整合MyBatis操作
+        1、配置模式
+        2、注解模式
+        3、混合模式
+    4、整合 MyBatis-Plus 完成CRUD
+        1、什么是MyBatis-Plus
+        2、整合MyBatis-Plus
+        3、CRUD功能
+2、NoSQL
+    1、Redis自动配置
+    2、RedisTemplate与Lettuce
+    3、切换至jedis
+---------------------------------------------------------------------------------
+1、SQL
+(分析：`引入场景`--xxxAutoConfiguration--组件（数据库连接池、数据源）--`properties配置文件中的配置项`)
+    1、数据源的自动配置-HikariDataSource
+        1、导入JDBC场景(spring-boot-starter-data-jdbc)
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-starter-data-jdbc</artifactId>
+            </dependency>
+            在spring-boot-starter-data-jdbc内部有：spring-boot-starter-jdbc
+            进入spring-boot-starter-jdbc内部，发现一个数据源：HikariCP
+          并且根据maven中的依赖关系，我们发现spring-boot-starter-data-jdbc导入了：
+                    数据库连接池（数据源）、事务、jdbc，但是没有数据库的驱动
+          原因：
+              数据库驱动？
+              - 为什么导入JDBC场景，官方不导入驱动？官方不知道我们接下要操作什么数据库（oracle mysql等）。
+                数据库版本和驱动版本对应
+                我们可以其mavenResponsity中引入mysql驱动：
+                        <!-- https://mvnrepository.com/artifact/com.mysql/mysql-connector-j -->
+                        <dependency>
+                            <groupId>mysql</groupId>
+                            <artifactId>mysql-connector-java</artifactId>
+                            <version>8.0.31</version>
+                        </dependency>
+                （分析：上面的version其实可以去掉，因为springboot官方会对mysql的版本做版本仲裁
+                    spring-boot-starter-parent下的spring-boot-dependencies进入：
+                            我们发现：
+                                <mysql.version>8.0.27</mysql.version>   ---- 默认版本
+                 ）
+                ---------------------------当默认仲裁的驱动版本与我们的数据库版本一致，可以使用自动仲裁------------------------------------
+                但是当不一致时，我们就需要自己执行：（两种方式）
+                    方式1：直接依赖引入具体版本（maven的就近依赖原则）
+                                 <dependency>
+                                     <groupId>mysql</groupId>
+                                     <artifactId>mysql-connector-java</artifactId>
+                                     <version>5.1.49</version>
+                                 </dependency>
+                    方式2： 重新声明版本（maven的属性的就近优先原则）
+                             <properties>
+                                 <java.version>1.8</java.version>
+                                 <mysql.version>5.1.49</mysql.version>
+                             </properties>
+        2、分析自动配置
+            1、自动配置的类
+                ● DataSourceAutoConfiguration ： 数据源的自动配置
+                  ○ 修改数据源相关的配置：spring.datasource
+                  ○ `数据库连接池的配置，是自己容器中没有DataSource才自动配置的`
+                        @Configuration(proxyBeanMethods = false)
+                    	@Conditional(PooledDataSourceCondition.class)
+                    	@ConditionalOnMissingBean({ DataSource.class, XADataSource.class })
+                    	@Import({ DataSourceConfiguration.Hikari.class, DataSourceConfiguration.Tomcat.class,
+                    			DataSourceConfiguration.Dbcp2.class, DataSourceConfiguration.OracleUcp.class,
+                    			DataSourceConfiguration.Generic.class, DataSourceJmxConfiguration.class })
+                    	protected static class PooledDataSourceConfiguration {
+                    	}
+                  ○ 底层配置好的连接池是：HikariDataSource
+
+                ● DataSourceTransactionManagerAutoConfiguration： 事务管理器的自动配置
+
+                ● JdbcTemplateAutoConfiguration： JdbcTemplate的自动配置，可以来对数据库进行crud
+                  ○ 可以修改这个配置项@ConfigurationProperties(prefix = "spring.jdbc") 来修改JdbcTemplate
+                  ○ @Bean@Primary    JdbcTemplate；容器中有这个组件
+
+                ● JndiDataSourceAutoConfiguration： jndi的自动配置
+                ● XADataSourceAutoConfiguration：   分布式事务相关的
+        3、修改配置项(11.2. Using JdbcTemplate)
+           注意username和password需要加双引号否则报错
+                spring:
+                  datasource:
+                    url: jdbc:mysql://localhost:3306/db_account?serverTimezone=UTC
+                    username: "root"   #给登录数据库的账号密码都加上双引号，然后这个bug就解决了
+                    password: "010205"
+                    driver-class-name: com.mysql.cj.jdbc.Driver
+                    type: com.zaxxer.hikari.HikariDataSource  #类型可以省略。因为这就是默认值
+
+                  jdbc:
+                    template:
+                      max-rows: 500
+        4、测试
+            @Slf4j
+            @SpringBootTest
+            class ApplicationTests {
+
+                @Autowired
+                JdbcTemplate jdbcTemplate;
+                @Test
+                void contextLoads() {
+                    Long aLong = jdbcTemplate.queryForObject("select count(*) from account_tb1", Long.class);
+            //        System.out.println(aLong);
+                    log.info("一共有{}条数据", aLong);
+                }
+            }
+    2、使用Druid数据源
+        1、druid官方github地址
+            https://github.com/alibaba/druid
+            整合第三方技术的两种方式
+            ● 自定义（纯手工）
+            ● 找starter（如果有场景，我们只需要去修改properties配置文件）
+        2、自定义方式（去看看对应的说明文档）
+            1、创建数据源
+                1.1引入数据源的依赖
+                        <dependency>
+                            <groupId>com.alibaba</groupId>
+                            <artifactId>druid</artifactId>
+                            <version>1.1.17</version>
+                        </dependency>
+                1.2原始方法：
+                    spring原生办法可以注册组件到ioc
+                            <bean id="dataSource" class="com.alibaba.druid.pool.DruidDataSource"
+                                    destroy-method="close">
+                                    <property name="url" value="${jdbc.url}" />
+                                    <property name="username" value="${jdbc.username}" />
+                                    <property name="password" value="${jdbc.password}" />
+                                    <property name="maxActive" value="20" />
+                                    <property name="initialSize" value="1" />
+                                    <property name="maxWait" value="60000" />
+                                    <property name="minIdle" value="1" />
+                                    <property name="timeBetweenEvictionRunsMillis" value="60000" />
+                                    <property name="minEvictableIdleTimeMillis" value="300000" />
+                                    <property name="testWhileIdle" value="true" />
+                                    <property name="testOnBorrow" value="false" />
+                                    <property name="testOnReturn" value="false" />
+                                    <property name="poolPreparedStatements" value="true" />
+                                    <property name="maxOpenPreparedStatements" value="20" />
+                1.3现在使用springboot的方法（使用配置类）
+                    因为我们在DataSourceAutoConfiguration中的DataSourceConfiguration中默认给我们提供的Hikari的条件是：
+                        当前容器中没有DataSource（默认的自动配置要求）
+                    因此我们只需在配置类中返回我们自定义的一个数据源，并且我们可以通过注解@ConfigurationProperties("spring.datasource")来绑定配置文件的配置
+                1.4测试当前容器的数据源是否为我们自定义的Druid
+                    @Autowired
+                        DataSource dataSource;
+                        @Test
+                        void contextLoads() {
+                            log.info("数据源是{}", dataSource.getClass());   //数据源是class com.alibaba.druid.pool.DruidDataSource
+                        }
+            2、StatViewServlet(设置Durid数据源的内置监控页 )
+                怎样使用Druid的内置监控页面（官方文档）
+                    Druid内置提供了一个StatViewServlet用于展示Druid的统计信息。
+                    这个StatViewServlet的用途包括：
+                        提供监控信息展示的html页面
+                        提供监控信息的JSON API
+                 步骤：
+                    1.原始是设置web.xml中设置一个servlet，现在我们可以使用配置类在容器中配置一个servlet
+                            @Bean
+                            public ServletRegistrationBean  statViewServlet(){
+                                StatViewServlet statViewServlet = new StatViewServlet();
+                                //public ServletRegistrationBean(T servlet, String... urlMappings)   //urlMappings设置拦截路径
+                                ServletRegistrationBean<StatViewServlet> statViewServletServletRegistrationBean = new ServletRegistrationBean<>(statViewServlet,"/druid/*");
+                                return statViewServletServletRegistrationBean;
+                            }
+                    2.访问：http://localhost:8080/druid/（看是否可以访问）
+                    3.我们随便设置一个controller
+                                @Autowired
+                                JdbcTemplate jdbcTemplate;
+                                @ResponseBody
+                                @GetMapping("/sql")
+                                public Long handleSql(){
+                                    Long aLong = jdbcTemplate.queryForObject("select count(*) from account_tb1", Long.class);
+                                    return aLong;
+                                }
+                     4.此时我们先去访问sql请求，然后去druid下面的sql监控，发现没有监控上
+                        因此引入下面的StatFilter
+              2.2通过StatViewServlet设置登录验证
+                （官方文档：1.2 配置监控页面访问密码 、 配置allow和deny（黑白名单））
+                    示例：
+                        <!-- 配置 Druid 监控信息显示页面 -->
+                        <servlet>
+                            <servlet-name>DruidStatView</servlet-name>
+                            <servlet-class>com.alibaba.druid.support.http.StatViewServlet</servlet-class>
+                            <init-param>
+                                <!-- 允许清空统计数据 -->
+                                <param-name>resetEnable</param-name>
+                                <param-value>true</param-value>
+                            </init-param>
+                            <init-param>
+                                <!-- 用户名 -->
+                                <param-name>loginUsername</param-name>
+                                <param-value>druid</param-value>
+                            </init-param>
+                            <init-param>
+                                <!-- 密码 -->
+                                <param-name>loginPassword</param-name>
+                                <param-value>druid</param-value>
+                            </init-param>
+                        </servlet>
+                        <servlet-mapping>
+                            <servlet-name>DruidStatView</servlet-name>
+                            <url-pattern>/druid/*</url-pattern>
+                        </servlet-mapping>
+                 实现：
+                    我们需要在2.1中的设置的servlet中设置属性
+            3、StatFilter
+                怎么打开Druid的监控统计功能
+                    Druid的监控统计功能是通过filter-chain扩展实现，如果你要打开监控统计功能，配置StatFilter
+                 Druid内置提供一个StatFilter，用于统计监控信息。
+                步骤：
+                    1.原始方法：是在配置数据源时设置一个属性
+                         <bean id="dataSource" class="com.alibaba.druid.pool.DruidDataSource" init-method="init" destroy-method="close">
+                          	... ...
+                          	<property name="filters" value="stat" />
+                          </bean>
+                    2.现在：
+                        我们直接去之前配置数据源的方法内部设置一个filters并且取值为stat即可
+                            @ConfigurationProperties("spring.datasource")
+                            @Bean
+                            public DataSource  dataSource() throws SQLException {
+                                //我们可以在这里设置配置参数，但是是写死的，
+                        //        我们可以通过注解@ConfigurationProperties("spring.datasource")来使用配置文件的配置
+                                DruidDataSource druidDataSource = new DruidDataSource();
+                        //        druidDataSource.setUrl();
+                        //        druidDataSource.setUsername();
+                        //        druidDataSource.setPassword();
+                        //        druidDataSource.setDriverClassName();
+                                druidDataSource.setFilters("stat");
+                                return druidDataSource;
+                            }
+                    3.此时我们访问
+                        http://localhost:8080/sql
+                        然后访问：
+                            http://localhost:8080/druid/sql.html
+                            我们可以在SQL监控中看到监控成功
+                            （注意其中的一些数值我们可以去“Druid的连接池介绍”中看看；例如：区间分布
+
+                                SQL监控项上，执行时间、读取行数、更新行数都有区间分布，将耗时分布成8个区间：
+                                0 - 1 耗时0到1毫秒的次数
+                                1 - 10 耗时1到10毫秒的次数
+                                10 - 100 耗时10到100毫秒的次数
+                                100 - 1,000 耗时100到1000毫秒的次数
+                                1,000 - 10,000 耗时1到10秒的次数
+                                10,000 - 100,000 耗时10到100秒的次数
+                                100,000 - 1,000,000 耗时100到1000秒的次数
+                                1,000,000 - 耗时1000秒以上的次数
+                                记录耗时区间的发生次数，通过区分分布，可以很方便看出SQL运行的极好、普通和极差的分布。
+                                耗时区分分布提供了“执行+RS时分布”，是将执行时间+ResultSet持有时间合并监控，
+                                这个能方便诊断返回行数过多的查询。）
+            4.开启Web应用监控（配置WebStatFilter）
+                （官方文档：内置监控中的Web和Spring关联监控怎么配置？）
+              4.1WebStatFilter用于采集web-jdbc关联监控的数据。
+                根据官方文档的xml方式：我们现在采用配置类设置一个filter的方式
+                    <filter>
+                      	<filter-name>DruidWebStatFilter</filter-name>
+                      	<filter-class>com.alibaba.druid.support.http.WebStatFilter</filter-class>
+                      	<init-param>
+                      		<param-name>exclusions</param-name>
+                      		<param-value>*.js,*.gif,*.jpg,*.png,*.css,*.ico,/druid/*</param-value>
+                      	</init-param>
+                      </filter>
+                      <filter-mapping>
+                      	<filter-name>DruidWebStatFilter</filter-name>
+                      	<url-pattern>/*</url-pattern>
+                      </filter-mapping>
+                    --------------------------------
+                    @Bean
+                    public FilterRegistrationBean webStatFilter(){
+                        WebStatFilter webStatFilter = new WebStatFilter();
+                        FilterRegistrationBean<WebStatFilter> webStatFilterFilterRegistrationBean = new FilterRegistrationBean<>(webStatFilter);
+                        webStatFilterFilterRegistrationBean.setUrlPatterns(Arrays.asList("/*"));
+                        webStatFilterFilterRegistrationBean.addInitParameter("exclusions", "*.js,*.gif,*.jpg,*.png,*.css,*.ico,/druid/*");
+                        return webStatFilterFilterRegistrationBean;
+                    }
+                测试：我们去http://localhost:8080/druid/然后看功能Web应用发现有数据了
+              4.2Spring关联监控配置
+                 Druid提供了Spring和Jdbc的关联监控。
+
+
+            5.开启防火墙
+                （官方文档：怎么配置防御SQL注入攻击）
+                Druid提供了WallFilter，它是基于SQL语义分析来实现防御SQL注入攻击的。
+                方法：
+                    WallFilter可以结合其他Filter一起使用，例如：
+                      <bean id="dataSource" class="com.alibaba.druid.pool.DruidDataSource" init-method="init" destroy-method="close">
+                          ...
+                          <property name="filters" value="wall,stat"/>
+                      </bean>
+                实现：
+                    1.
+                        @ConfigurationProperties("spring.datasource")
+                        @Bean
+                        public DataSource  dataSource() throws SQLException {
+                            //我们可以在这里设置配置参数，但是是写死的，
+                            DruidDataSource druidDataSource = new DruidDataSource();
+                            druidDataSource.setFilters("stat,wall");
+                            return druidDataSource;
+                        }
+                    2.
+                        或者我们可以直接在application.yal中设置属性filters: stat,wall
+                        spring:
+                          datasource:
+                            url: jdbc:mysql://localhost:3306/db_account?serverTimezone=UTC
+                            username: "root"   #给登录数据库的账号密码都加上双引号，然后这个bug就解决了
+                            password: "010205"
+                            driver-class-name: com.mysql.cj.jdbc.Driver
+                            type: com.zaxxer.hikari.HikariDataSource  #类型可以省略。因为这就是默认值
+                            filters: wall,stat
+
+        3、使用官方starter方式整合druid数据源（https://github.com/alibaba/druid/tree/master/druid-spring-boot-starter）
+        （我们首先将自定义注解类MyDataSourceConfig的注解关闭）
+            1、引入druid-starter
+                (之前引入的数据源的依赖我们可以注释掉)
+                <dependency>
+                   <groupId>com.alibaba</groupId>
+                   <artifactId>druid-spring-boot-starter</artifactId>
+                   <version>1.1.17</version>
+                </dependency>
+                （记得添加配置 username等几项）
+            2、分析自动配置
+                druid-spring-boot-starter-1.1.17.jar!\com\alibaba\druid\spring\boot\autoconfigure\DruidDataSourceAutoConfigure.class
+                    1.@ConditionalOnClass(DruidDataSource.class)    容器中已经有druid数据源
+                    2.@AutoConfigureBefore(DataSourceAutoConfiguration.class)  说明我们需要在官方默认的自动配置之前生效
+                    3.@EnableConfigurationProperties({DruidStatProperties.class, DataSourceProperties.class})
+                            1.我们进入DataSourceProperties中发现@ConfigurationProperties(prefix = "spring.datasource")
+                                这说明我们就算使用第三方的数据源，也是绑定的配置文件spring.datasource下的配置
+                            2.我们进入DruidStatProperties中发现@ConfigurationProperties("spring.datasource.druid")
+                                 这是扩展配置项spring.datasource.druid
+                        DruidDataSourceAutoConfigure返回的是一个包装器DruidDataSourceWrapper
+                    4.@Import({DruidSpringAopConfiguration.class,
+                               DruidStatViewServletConfiguration.class,
+                               DruidWebStatFilterConfiguration.class,
+                               DruidFilterConfiguration.class})
+                       ● DruidSpringAopConfiguration.class,         Spring监控
+                            监控SpringBean的（对应我们之前访问http://localhost:8080/druid下的Spring监控功能）；
+                            配置项：spring.datasource.druid.aop-patterns
+                       ● DruidStatViewServletConfiguration.class,   内置监控页
+                            监控页的配置：
+                            spring.datasource.druid.stat-view-servlet；
+                            默认开启
+                       ●  DruidWebStatFilterConfiguration.class,    web监控
+                            web监控配置；
+                            spring.datasource.druid.web-stat-filter；
+                            默认开启
+                       ● DruidFilterConfiguration.class})
+                            所有Druid自己filter的配置
+                                private static final String FILTER_STAT_PREFIX = "spring.datasource.druid.filter.stat";
+                                    private static final String FILTER_CONFIG_PREFIX = "spring.datasource.druid.filter.config";
+                                    private static final String FILTER_ENCODING_PREFIX = "spring.datasource.druid.filter.encoding";
+                                    private static final String FILTER_SLF4J_PREFIX = "spring.datasource.druid.filter.slf4j";
+                                    private static final String FILTER_LOG4J_PREFIX = "spring.datasource.druid.filter.log4j";
+                                    private static final String FILTER_LOG4J2_PREFIX = "spring.datasource.druid.filter.log4j2";
+                                    private static final String FILTER_COMMONS_LOG_PREFIX = "spring.datasource.druid.filter.commons-log";
+                                    private static final String FILTER_WALL_PREFIX = "spring.datasource.druid.filter.wall";
+                                    private static final String FILTER_WALL_CONFIG_PREFIX = FILTER_WALL_PREFIX + ".config";
+            3、配置示例
+            （我们去看官网中的配置：https://github.com/alibaba/druid/tree/master/druid-spring-boot-starter#readme）
+                spring:
+                  datasource:
+                    url: jdbc:mysql://localhost:3306/db_account?serverTimeZone=UTC
+                    username: root
+                    password: 010205
+                    driver-class-name: com.mysql.jdbc.Driver
+
+                    druid:
+                      aop-patterns: com.atguigu.xjws.*  #监控SpringBean
+                      filters: stat,wall     # 底层开启功能，stat（sql监控），wall（防火墙）
+
+                      stat-view-servlet:   # 配置内置监控页
+                        enabled: true
+                        login-username: admin
+                        login-password: admin
+                        resetEnable: false
+
+                      web-stat-filter:  # 监控web
+                        enabled: true
+                        urlPattern: /*
+                        exclusions: '*.js,*.gif,*.jpg,*.png,*.css,*.ico,/druid/*'
+
+
+                      filter:
+                        stat:    # 对上面filters里面的stat的详细配置
+                          slow-sql-millis: 1000   所有查询时间大于1000ms就算慢查询
+                          logSlowSql: true     是否记录这些慢查询
+                          enabled: true
+                        wall:
+                          enabled: true
+                          config:
+                            drop-table-allow: false
+               系统中所有filter：
+                   别名	            Filter类名
+                   default	        com.alibaba.druid.filter.stat.StatFilter
+                   stat	            com.alibaba.druid.filter.stat.StatFilter
+                   mergeStat	    com.alibaba.druid.filter.stat.MergeStatFilter
+                   encoding	        com.alibaba.druid.filter.encoding.EncodingConvertFilter
+                   log4j	        com.alibaba.druid.filter.logging.Log4jFilter
+                   log4j2	        com.alibaba.druid.filter.logging.Log4j2Filter
+                   slf4j	        com.alibaba.druid.filter.logging.Slf4jLogFilter
+                   commonlogging	com.alibaba.druid.filter.logging.CommonsLogFilter
+
+    3、整合MyBatis操作
+        前面使用的JDBCTemplate功能简单，我们主要是使用mybatis
+            https://github.com/mybatis
+            starter(我们可以去上面地址的quick  start )
+            - SpringBoot官方的Starter：spring-boot-starter-*
+            - 第三方的： *-spring-boot-starter
+                groupId和artifactId和version
+                <dependency>
+                    <groupId>org.mybatis.spring.boot</groupId>
+                    <artifactId>mybatis-spring-boot-starter</artifactId>
+                    <version>2.1.4</version>
+                </dependency>
+        1、配置模式
+            分析自动配置:
+                我们进入MybatisAutoConfiguration
+                    @ConditionalOnClass({ SqlSessionFactory.class, SqlSessionFactoryBean.class })  //需要有mybatis的jar包
+                    @ConditionalOnSingleCandidate(DataSource.class)  ioc容器中有且只有一个数据源
+                    @EnableConfigurationProperties(MybatisProperties.class)
+                    @AutoConfigureAfter({ DataSourceAutoConfiguration.class, MybatisLanguageDriverAutoConfiguration.class })
+
+                    进入MybatisProperties中：
+                        @ConfigurationProperties(prefix = MybatisProperties.MYBATIS_PREFIX)
+                            MybatisProperties.MYBATIS_PREFIX就是“mybatis”  ---》可以修改配置文件中 mybatis 开始的所有；
+                    进入看MybatisAutoConfiguration中注册的组件Bean:
+                        - SqlSessionFactory
+                        - SqlSessionTemplate(内部配置了SqlSession)
+                        - @org.springframework.context.annotation.Configuration
+                          @Import(AutoConfiguredMapperScannerRegistrar.class)
+                          @ConditionalOnMissingBean({ MapperFactoryBean.class, MapperScannerConfigurer.class })
+                          public static class MapperScannerRegistrarNotFoundConfiguration implements InitializingBean {
+                          }
+                            进入AutoConfiguredMapperScannerRegistrar：
+                                registerBeanDefinitions方法：会找到所有标注@Mapper注解的接口（只要我们写的操作MyBatis的接口标准了 @Mapper 就会被自动扫描进来）
+            总结：
+                ● 全局配置文件（以前的方式）
+                ● SqlSessionFactory: 自动配置好了
+                ● SqlSession：自动配置了 SqlSessionTemplate 组合了SqlSession
+                ● @Import(AutoConfiguredMapperScannerRegistrar.class）；
+                ● Mapper： 只要我们写的操作MyBatis的接口标准了 @Mapper 就会被自动扫描进来
+            实验：
+                （参考mybatis官网入门案例：）
+                1.mybatis的全局配置文件
+                    （我们直接在yaml中说明改文件的位置）
+                    mybatis:
+                      config-location: classpath:mybatis/mybatis-config.xml
+                 2.我们在创建一个mapper包
+                    2.1创建对应数据库中某一个表的接口（提前设置好pojo）
+                    2.2创建一个sql映射文件（这个名字需要和2.1接口名字一致）
+                        假设这个文件位置在mybatis.mapper下
+                    2.3需要设置mybatis的sql映射文件的位置：
+                        mybatis:
+                          config-location: classpath:mybatis/mybatis-config.xml
+                          mapper-locations: classpath:mybatis/mapper/*
+                    2.4完善接口和其对应的sql映射文件,并且设置service层
+                    2.5可以设置一个controller来测试上面的功能
+                    2.6解决pojo类与数据库表列名不一致问题：
+                        方法1：修改mybati-config.xml
+                            <settings>
+                                    <setting name="mapUnderscoreToCamelCase" value="true"/>
+                                </settings>
+                         方法2：
+                            因为好多的配置都在MybatisProperties中绑定了：-->类Configuration
+                            进入Configuration后：我们发现好多属性，因此可以通过yaml中配置
+                                配置 private Configuration configuration; mybatis.configuration下面的所有，就是相当于改mybatis全局配置文件中的值
+
+                            mybatis:
+                              config-location: classpath:mybatis/mybatis-config.xml
+                              mapper-locations: classpath:mybatis/mapper/*
+                              configuration:
+                                map-underscore-to-camel-case: true
+                     2.7注意上面的配置文件写法是错误的，
+                        Property 'configuration' and 'configLocation' can not specified with together
+                        即config-location和configuration不能同时在yaml或者properties配置文件中同时出现
+                        mybatis:
+                              mapper-locations: classpath:mybatis/mapper/*
+                              configuration:
+                              map-underscore-to-camel-case: true
+                        所以可以不写全局配置文件，所有全局配置文件的配置都放在configuration配置项中即可
+            补充说明：
+                我们pojo类的属性名字与数据库的表的列名不一致时，如何处理
+                （我们可以去mybatis官方文档的xml配置中的设置（settings）寻找）
+                - mapUnderscoreToCamelCase	是否开启驼峰命名自动映射，
+                    即从经典数据库列名 A_COLUMN 映射到经典 Java 属性名 aColumn。
+            1的总结：
+                ● 导入mybatis官方starter
+                ● 编写mapper接口。标准@Mapper注解
+                ● 编写sql映射文件并绑定mapper接口
+                ● 在application.yaml中指定Mapper配置文件的位置，以及指定全局配置文件的信息 （建议；配置在mybatis.configuration）
+                        （不建议设置mybatis-config.xml文件）
+
+        2、注解模式
+            所谓的注解模式，其实是在我们设置mapper接口的内部中使用注解
+            从而不设置XxxMapper.xml文件，
+            ------
+            @Select @Insert
+            @Options(userGenerateKeys=true,keyProperties="id")
+            ------
+
+            例如：
+
+        3、混合模式
+            注解模型+XxxMapper.xml共存
+        4、最佳实战（推荐）：
+          ● 引入mybatis-starter
+          ● 配置application.yaml中，指定mapper-location位置即可
+          ● 编写Mapper接口并标注@Mapper注解
+          ● 简单方法直接注解方式
+          ● 复杂方法编写mapper.xml进行绑定映射
+          ● @MapperScan("com.atguigu.admin.mapper") 简化，其他的接口就可以不用标注@Mapper注解
+
+    4、整合 MyBatis-Plus 完成CRUD
+        1、什么是MyBatis-Plus
+            - MyBatis-Plus（简称 MP）是一个 MyBatis 的增强工具，在 MyBatis 的基础上只做增强不做改变，为简化开发、提高效率而生。
+                mybatis plus 官网
+            - 建议安装 MybatisX 插件
+        2、整合MyBatis-Plus
+            - 本次整合目的是实现advanced table中页面展示并且实现分页
+            1.准备工作（数据库表user，pojo类User）
+            2.添加依赖
+                <dependency>
+                    <groupId>com.baomidou</groupId>
+                    <artifactId>mybatis-plus-boot-starter</artifactId>
+                    <version>3.4.1</version>
+                </dependency>
+              mybatis-plus-boot-starter中包含spring-boot-starter-data-jdbc
+            3.分析自动配置
+                ● MybatisPlusAutoConfiguration 配置类，
+                        MybatisPlusProperties 配置项绑定。
+                        mybatis-plus：xxx 就是对mybatis-plus的定制
+                ● SqlSessionFactory 自动配置好（mybatis的jar包）。底层是容器中默认的数据源
+                ● mapperLocations 自动配置好的。（MybatisPlusProperties类下）
+                    有默认值。classpath*:/mapper/**/*.xml；
+                        任意包的类路径下的所有mapper文件夹下任意路径下的所有xml都是sql映射文件。
+                        建议以后sql映射文件，放在 mapper下
+                ● 容器中也自动配置好了 SqlSessionTemplate
+                ● @Mapper 标注的接口也会被自动扫描；建议直接 @MapperScan("com.atguigu.admin.mapper") 批量扫描就行  （registerBeanDefinitions方法）
+            4.编写 Mapper 包下的 UserMapper接口
+                public interface UserMapper extends BaseMapper<User>
+                这个BaseMapper中有一些基础的查询已经实现
+                优点：
+                ●  只需要我们的Mapper继承 BaseMapper 就可以拥有crud能力
+            5.关于pojo类与数据表名之间的一些东西
+                1.注解@TableField(exist=false)
+                    表明标注的变量不是属性，不对应数据库中表的列
+                2.@TableName("数据库中对应的表名字")
+                    当我我们的pojo类与数据库表的名字不一致时，可以使用此注解
+            6.Service层
+                - 我们一般都是写一个接口，然后实现接口
+                - 我们写一个UserService接口，让其继承IService
+                    public interface UserService extends IService<User>
+                    Iservice是所有service的总接口
+                - 我们写UserServiceImpl
+                    public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements UserService {
+            7.去controller使用这些功能
+                1.遍历：
+                        List<User> list = userService.list();
+                        model.addAttribute("userList", list);
+                        return "tables/dynamic_table";
+                2.使用分页功能
+                    注意：需要配置分页插件
+                    在使用分页功能后，我们在前端遍历数据时不能使用1的方式，而是使用分页功能总的属性
+                    @Configuration
+                    public class MybatisPlusConfig {
+                        @Bean
+                            public MybatisPlusInterceptor mybatisPlusInterceptor() {
+                                MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();
+                                interceptor.addInnerInterceptor(new PaginationInnerInterceptor(DbType.H2));
+                                return interceptor;
+                            }
+                       }
+                3.看看下面重定向携带参数的方式
+                <tbody>
+                                                    <tr class="gradeX" th:each="user,status : ${page.records}">
+                                                        <td th:text="${user.id}">Trident</td>
+                                                        <td th:text="${user.name}"></td>
+                                                        <td th:text="${user.age}"></td>
+                                                        <td th:text="${user.email}">4</td>
+                                                        <td>
+                                                            <!--为例实现删除后仍然在某一页下，所以我们携带参数：当前页码-->
+                                                            <a th:href="@{/delete/user/{id}(id=${user.id},pn=${page.current})}" class="btn btn-danger btn-sm" type="button">删除</a>
+
+                                                        </td>
+                                                    </tr>
+                                                    </tbody>
+
+                                                </table>
+                                                <div class="row-fluid">
+                                                    <div class="span6">
+                                                        <div class="dataTables_info" id="dynamic-table_info">当前是第[[${page.current}]]页 一共[[${page.pages}]]页 共[[${page.total}]]条记录
+
+                                                        </div>
+                                                    </div>
+                                                    <div class="span6">
+                                                        <div class="dataTables_paginate paging_bootstrap pagination">
+                                                            <ul>
+                                                                <li class="prev disabled"><a href="#">← Previous</a></li>
+                                                                <li th:class="${num==page.current?'active':''}" th:each="num:${#numbers.sequence(1,page.pages)}">
+                                                                    <a th:href="@{/dynamic_table(pn=${num})}">[[${num}]]</a>
+                                                                </li>
+                                                                <li class="next"><a href="#">Next → </a></li>
+                                                            </ul>
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                           @Autowired
+                               UserService userService;
+
+                               @GetMapping("/delete/user/{id}")
+                               public String deleteUser(@PathVariable("id") Long id,
+                                                        @RequestParam(value = "pn",defaultValue = "1") Integer pn,
+                                                        RedirectAttributes ra){
+                                   userService.removeById(id);
+                                   ra.addAttribute("pn",pn);
+                                   return "redirect:/dynamic_table";
+                               }
+
+                               @GetMapping("/basic_table")
+                               public String basicTable(){
+                                   System.out.println(5/0);
+                                   return "tables/basic_table";
+                               }
+                               @GetMapping("/dynamic_table")
+                               public String dynamicTable(@RequestParam(value = "pn",defaultValue = "1") Integer currentPage, Model model){
+                                   //从数据库中查询user数据并在浏览器展示
+                                   Page<User> userPage = new Page<>(currentPage, 3);//意思是当前第currentPage页，每页有3条
+                                   Page<User> page = userService.page(userPage, null);//queryWrapper是过滤条件
+                                   //这个page中有很多属性，但是我们需要先设置分页插件才可以
+                                   model.addAttribute("page", page);
+                                   return "tables/dynamic_table";
+                               }
+
+2、NoSQL
+    Redis 是一个开源（BSD许可）的，内存中的数据结构存储系统，它可以用作数据库、缓存和消息中间件。
+    它支持多种类型的数据结构，
+        如  字符串（strings）， 散列（hashes），
+            列表（lists）， 集合（sets），
+            有序集合（sorted sets） 与范围查询，
+            bitmaps， hyperloglogs 和 地理空间（geospatial） 索引半径查询。
+    Redis 内置了 复制（replication），LUA脚本（Lua scripting）， LRU驱动事件（LRU eviction），
+    事务（transactions） 和不同级别的 磁盘持久化（persistence），
+    并通过 Redis哨兵（Sentinel）和自动 分区（Cluster）提供高可用性（high availability）。
+
+    1、Redis自动配置
+        1.1引入场景依赖
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-starter-data-redis</artifactId>
+            </dependency>
+        1.2分析自动配置：
+           ● RedisAutoConfiguration 自动配置类。RedisProperties 属性类 --> spring.redis.xxx是对redis的配置
+                @EnableConfigurationProperties(RedisProperties.class)
+           ● 连接工厂是准备好的。LettuceConnectionConfiguration（Lettuce的连接配置）、JedisConnectionConfiguration
+                @Import({ LettuceConnectionConfiguration.class, JedisConnectionConfiguration.class })
+                进入LettuceConnectionConfiguration：
+                    如果属性spring.redis.client-type=lettuce，则就注册连接工厂
+           ● 自动注入了RedisTemplate<Object, Object> ：
+                    xxxTemplate（就是操作redis）；
+           ● 自动注入了StringRedisTemplate；k和v都是String
+           ● key：value
+           ● 底层只要我们使用 StringRedisTemplate、RedisTemplate就可以操作redis
+
+        1.3redis环境搭建
+           1、阿里云按量付费redis。
+                按量付费、经典网络、社区版、redis5.0、读写分离版、制度节点（1个）、密码、实例名称--自定义
+           2、申请redis的公网连接地址
+                在实例信息中申请公网连接
+           3、修改白名单  允许0.0.0.0/0 访问
+                白名单设置--添加白名单分组
+           4、测试链接
+            先去账号管理设置一个账号
+                公网连接地址
+                密码是       账号:密码
+    2、RedisTemplate与Lettuce
+    我们操作redis使用的是RedisTeplate，其底层使用的是Lettuce
+        1.连接Redis
+            spring:
+                redis:
+                    #url: redis://用户:密码@公网地址:6379
+                    url: redis://xj_redis:Xj010205@r-bp1595qgrg5uibhq7opd.redis.rds.aliyuncs.com:6379
+        2.去测试类测试连接
+            自动装配那个RedisTemplate
+                @Autowired
+                RedisTemplate redisTemplate;
+                @Test
+                public void testRedis(){
+                    ValueOperations<String,String> valueOperations = redisTemplate.opsForValue();
+                    valueOperations.set("hello", "world");
+
+                    String hello = valueOperations.get("hello");
+                    System.out.println(hello);
+                }
+        3.如果出现无法连接
+            我们就不使用url的方式(而是使用下面三个替换url)
+            host
+            part
+            password
+    3、切换至jedis
+       1.通过源码我们知道使用jedis需要导入jar包即依赖（版本会自动仲裁）
+                <dependency>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-data-redis</artifactId>
+                </dependency>
+
+        <!--        导入jedis-->
+                <dependency>
+                    <groupId>redis.clients</groupId>
+                    <artifactId>jedis</artifactId>
+                </dependency>
+       2.在配置文件中指明spring.redis.client-type为jedis
+         spring:
+           redis:
+             url: redis://xj_redis:Xj010205@r-bp1595qgrg5uibhq7opd.redis.rds.aliyuncs.com:6379
+             client-type: jedis
+
+       3.测试是否切换成功
+        分析：由于Redis底层无论使用Jedis还是Lettuce，此层都是加入一个连接工厂
+            LettuceConnectionFactory
+            JedisConnectionFactory
+            而这两个内部有都是实现接口：RedisConnectionFactory
+            因此我们只需获取连接工厂是谁就知道是否切换成功没有
+         测试：
+            @Autowired
+            RedisTemplate redisTemplate;
+            System.out.println(redisConnectionFactory.getClass());
+
+
+            redis:
+            #    url: redis://xj_redis:Xj010205@r-bp1595qgrg5uibhq7opd.redis.rds.aliyuncs.com:6379
+                client-type: jedis
+                port: 6379
+                host: r-bp1595qgrg5uibhq7opd.redis.rds.aliyuncs.com
+                password: xj_redis:Xj010205
+                jedis:
+                  pool:
+                    max-active: 10 #最大线程数
+    4.实验
+        实现监控指定请求，并且巨鹿其访问次数
+      分析实现：
+        我们可以使用一个自定义的拦截器（因为除了放行了几个请求外，任何请求都需要过拦截器），
+            在其preHandle中设置让其使用redis（记录：操作路径：次数）
+        1.
+            @Component  //放到ioc中
+            public class RedisUrlControllerInterceptor implements HandlerInterceptor {
+                @Autowired
+                StringRedisTemplate stringRedisTemplate;
+
+                @Override
+                public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+                    //1.判断请求是谁
+                    String requestURI = request.getRequestURI();
+                    stringRedisTemplate.opsForValue().increment("requestURI");
+                    return true;//这个拦截器永远都是放行
+                    //2.去配置类中注册该拦截器
+                }
+
+            }
+          2.
+            @Configuration
+            public class WebConfig implements WebMvcConfigurer {
+                /**
+                 * Filter、Interceptor 几乎拥有相同的功能？
+                 * 1、Filter是Servlet定义的原生组件。好处，脱离Spring应用也能使用
+                 * 2、Interceptor是Spring定义的接口。可以使用Spring的自动装配等功能
+                 *
+                 */
+                @Autowired
+                RedisUrlControllerInterceptor redisUrlControllerInterceptor;
+                @Override
+                public void addInterceptors(InterceptorRegistry registry) {
+                    registry.addInterceptor(new LoginInterceptor())
+                            .addPathPatterns("/**")  //所有请求都被拦截包括静态资源
+                            .excludePathPatterns("/","/login","/css/**","/fonts/**","/images/**",
+                                    "/js/**","/aa/**","/insertcity"); //放行的请求
+                    //注意因为我们在RedisUrlControllerInterceptor使用注解@Component，
+            //        因此在这我们不能自己new（不是从容器中拿）,否则RedisUrlControllerInterceptor内部使用的autowired无法使用（因为只有容器中的组件springboot才会解析这些注解）
+                    //我们直接在这里注入即可
+                    registry.addInterceptor(redisUrlControllerInterceptor).addPathPatterns("/**")
+                    .excludePathPatterns("/","/login","/css/**","/fonts/**","/images/**",
+                                            "/js/**","/aa/**","/insertcity");
+
+                }
+
+          3.修改indexController部分
+                    @Autowired
+                    StringRedisTemplate redisTemplate;
+                    @GetMapping("/index.html")
+                    public String indexPage(HttpSession session,Model model){
+                        log.info("当前的方法是：", "indexPage");
+                //        if(session.getAttribute("user")!=null){
+                //            return "index";   //这样当我门在首页时，即使刷新页面，也不会造成表单的重复提交
+                //        }else{
+                //            model.addAttribute("msg", "请重新登录");
+                //
+                //            return "login";
+                //        }
+                        //获取redis中的数据
+                        ValueOperations<String, String> stringStringValueOperations = redisTemplate.opsForValue();
+                        String indexCount = stringStringValueOperations.get("/index.html");
+                        String sqlCount = stringStringValueOperations.get("/sql");
+                        model.addAttribute("indexCount", indexCount);
+                        model.addAttribute("sqlCount", sqlCount);
+                        return "index";
+                    }
+          4.修改html
+
+
+
+
+Filter、Interceptor 几乎拥有相同的功能？
+      * 1、Filter是Servlet定义的原生组件。好处，脱离Spring应用也能使用
+      * 2、Interceptor是Spring定义的接口。可以使用Spring的自动装配等功能
+      *
+      */

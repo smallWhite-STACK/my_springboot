@@ -1,0 +1,850 @@
+构建后台管理系统
+     1、项目创建
+     2、静态资源处理
+     3、路径构建
+     4、模板抽取
+     5、页面跳转
+     6、数据渲染
+---------------------------------------------------------------
+构建后台管理系统
+1、项目创建
+    thymeleaf、web-starter、devtools、lombok
+2、静态资源处理
+    自动配置好，我们只需要把所有静态资源放到 static 文件夹下
+3、路径构建
+    th:action="@{/login}"
+
+   3.1表单的无限提交问题：
+        描述：例如登录成功后，哦们刷新index页面，则会无线次的重复提交表单
+            如下：
+                @PostMapping("/login")
+                    public String index(){
+                        return "index";
+                    }
+        解决方式1：：
+                @PostMapping("/login")
+                public String indexPage(){
+                    return "redirect:index.html";
+                }
+
+                @GetMapping("/index.html")
+                public String index2(){
+                    return "index";   //这样当我门在首页时，即使刷新页面，也不会造成表单的重复提交
+                }
+         注意：方式一会造成当哦们直接访问： http://localhost:8080/index.html就可以直接看到后台，这是不可以的
+         对方式1的补充：
+                分析：我们可以在index中将表单提交的信息与pojo的Person对应
+                        然后设置用户名和密码的要求
+                        将这个Person放到session中
+                        之后再indexPage中通过获取session中保存的登录用户，如果可以获取到，就跳转到首页，否则读否则去login
+                        @PostMapping("/login")
+                            public String index(Person person,HttpSession session,Model model){
+                                //1.对提交的用户信息判断
+                                if(person.getPassword().equals("root")){
+                                    //2.如果符合要求，就放到session并且重定向
+                                    session.setAttribute("root", person);
+                                    return "redirect:index.html";
+                                }else{
+                                    //3.否则，到login
+                        //            session.setAttribute("msg", "密码错误");
+                        //            不是使用session来返回错误信息，而是通过model等
+                                    model.addAttribute("msg", "密码错误");
+                                    return "login";
+                                }
+                            }
+
+                            @GetMapping("/index.html")
+                            public String indexPage(HttpSession session,Model model){
+                                if(session.getAttribute("root")!=null){
+                                    return "index";   //这样当我门在首页时，即使刷新页面，也不会造成表单的重复提交
+                                }else{
+                                    model.addAttribute("msg", "请重新登录");
+
+                                    return "login";
+                                }
+                            }
+    3.2关于将登录时的错误提示信息展示出来
+        1.在login.html中的input框上加上：
+           <label style="color: #1fb5ad" th:text="${msg}"></label>
+    3.3登陆成功后，我们在首页右上角显示登录者的名字
+        1.修改index.html
+            首先通过浏览器的F12定位位置，
+            然后利用thymeleaf的行内（inlining）写法：[[${session.user.name}]]
+    3.4实现与table相关的功能
+        controller（四个表的请求）
+        记得每个html中加上thymeleaf的命名空间
+4、模板抽取（thymeleaf的官方文档：template layout）
+    （因为我们不同页面下，左侧和上面的区域是一样的，我们需要将这个一致的部分抽取出来）
+    我们可以对比html中的内容，将一样的部分进行抽取（common.html）
+    使用：
+        假设我们在in.html中使用th:fragment=“xxx”
+        th:insert或者th:replace或者th:include(include在3.0以后不推荐)
+        th:insert 是将引用的标签包括那个标签插入到当前标签内部
+        th:include 是将引用的标签内部内容插入到当前标签内部（标签名字不变，区分th:replace）
+        th:replace 是将引用的标签名字替换当前标签
+    实验：
+        我们将设计data的几个表进行模板抽取
+        1.将共有的部分放到common.html中
+        2.注意修改几个文件的thymeleaf的语法
+            link   th: href
+            script  th:src
+        3.使用thymeleaf模板抽取的语法对common中的部分设置id（选择器）或者fragment
+        4.在其他html中使用（th:insert或者th:replace或者th:include）引入common部分
+            我们实现需要测试th:insert或者th:replace或者th:include是否能成功使用fragment或者id声明的部分
+        5.此时我们去页面点击“basic table”，发现页面跳转为：
+            http://localhost:8080/basic_table.html
+            我们需要去common.html中使用thymeleaf修改页面跳转的请求
+                原始代码：
+                                <li><a href="basic_table.html"> Basic Table</a></li>
+                                <li class="active"><a href="dynamic_table.html"> Advanced Table</a></li>
+                                <li><a href="responsive_table.html"> Responsive Table</a></li>
+                                <li><a href="editable_table.html"> Edit Table</a></li>
+                修改后：
+                                <li><a th:href="@{/basic_table}"> Basic Table</a></li>
+                                <li class="active"><a th:href="@{dynamic_table}"> Advanced Table</a></li>
+                                <li><a th:href="@{responsive_table}"> Responsive Table</a></li>
+                                <li><a th:href="@{editable_table}"> Edit Table</a></li>
+         6.修改后我们需要设置controller处理这四个请求
+         7.common.html中dashboard需要使用thymeleaf语法
+         8.common.html中登陆者名字修改  （行内写法）
+         9.common.html中logout功能
+         10.关于Advance table功能中表格动态展示功能（假设我们展示用户的信息）
+            第一步：在对应的controller中使用model将用户信息保存
+            第二步：到对应html中，遍历数据
+            （thymeleaf遍历时获取顺序（详见官方文档：Iteration--6.2 Keeping iteration status）
+                    <tr class="gradeX" th:each="user,iterStat : ${userList}">
+                        <td th:text="${iterStat.count}">1</td>
+                        <td th:text="${user.name}"></td>
+                        <td th:text="${user.password}"></td>
+                    </tr>
+             ）
+-------------------------------------------------------------------------------------------------------------------------
+视图解析原理流程(vedio：47)
+    1、目标方法处理的过程中，所有数据都会被放在 ModelAndViewContainer 里面。包括数据和视图地址
+    2、方法的参数是一个自定义类型对象（从请求参数中确定的），把他重新放在 ModelAndViewContainer
+    3、任何目标方法执行完成以后都会返回 ModelAndView（数据和视图地址）。
+    4、processDispatchResult  处理派发结果（页面改如何响应）
+    ● 1、render(mv, request, response); 进行页面渲染逻辑
+      ○ 1、根据方法的String返回值得到 View 对象【定义了页面的渲染逻辑】
+        ■ 1、所有的视图解析器尝试是否能根据当前返回值得到View对象
+        ■ 2、得到了  redirect:/main.html --> Thymeleaf new RedirectView()
+        ■ 3、ContentNegotiationViewResolver 里面包含了下面所有的视图解析器，内部还是利用下面所有视图解析器得到视图对象。
+        ■ 4、view.render(mv.getModelInternal(), request, response);   视图对象调用自定义的render进行页面渲染工作
+          ● RedirectView 如何渲染【重定向到一个页面】
+          ● 1、获取目标url地址
+          ● 2、response.sendRedirect(encodedURL);
+-------------------------------------------------------------------------------------------------------------------------
+6、拦截器(见：4-boot-web-admin.txt)
+    1、HandlerInterceptor接☐
+
+    2、配置拦截器
+         * 1、编写一个拦截器实现HandlerInterceptor接口
+         * 2、拦截器注册到容器中（实现WebMvcConfigurer的addInterceptors）
+         * 3、指定拦截规则【如果是拦截所有，静态资源也会被拦截】
+
+
+    3、拦载截器原理
+        1、根据当前请求，找到HandlerExecutionChain【可以处理请求的handler以及handler的所有 拦截器】
+        2、先来顺序执行 所有拦截器的 preHandle方法
+            ● 1、如果当前拦截器prehandler返回为true。则执行下一个拦截器的preHandle
+            ● 2、如果当前拦截器返回为false。直接    倒序执行所有已经执行了的拦截器的  afterCompletion；
+        3、如果任何一个拦截器返回false。直接跳出不执行目标方法
+        4、所有拦截器都返回True。执行目标方法
+        5、倒序执行所有拦截器的postHandle方法。
+        6、前面的步骤有任何异常都会直接倒序触发 afterCompletion
+        7、页面成功渲染完成以后，也会倒序触发 afterCompletion
+    -----------------------------------------------------------------------------------
+    4.实验：自定义拦截器（做登录检查）
+           * 1、配置好拦截器要拦截哪些请求（自定义一个类实现接口HandleInterceptor,）
+                    实现三个方法：
+                        目标方法执行之前
+                        目标方法执行之后
+                        页面渲染之后
+                        @Slf4j
+                        public class LoginInterceptor implements HandlerInterceptor {
+                            @Override
+                            public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+                                //我们可以使用日志功能输出当前拦截的请求地址
+                                String requestURI = request.getRequestURI();
+                                log.debug("当前拦截的请求是："+requestURI);
+
+                                //如果我们的session中是否有用户信息（user），我们就放行
+                                //1.获取session
+                                HttpSession session = request.getSession();
+                                Object user = session.getAttribute("user");
+                                if(user!=null){
+                                    //2.放行
+                                    return true;
+                                }
+                                //3.否则，去登录
+                                //3.1想reques中加入msg提示（因为我们在login.html中设置了
+                                //              <label style="color: #1fb5ad" th:text="${msg}"></label>
+
+                                request.setAttribute("msg", "请先登录");
+                                request.getRequestDispatcher("/").forward(request, response);
+                                return false;
+                            }
+                            @Override
+                            public void postHandle(HttpServletRequest request, HttpServletResponse response, Object handler, ModelAndView modelAndView) throws Exception {
+                                log.debug("postHandle执行,"+modelAndView);
+                            }
+                            @Override
+                            public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) throws Exception {
+                                log.info("afterCompletion执行异常{}",ex);
+                            }
+                        }
+
+           * 2、把这些配置放在容器中（使用自定义配置类(记得注解@Configuration)，WebMvcConfigurer(addInterceptor)）
+                2.1我们可以设置直接放行哪些请求 或者 拦截哪些路径满足（/**）
+                2.2此时我们可以让拦截后的哪些路径，重定向到登录页面
+                    如果采用重定向方式：
+                        //拦截住。未登录。跳转到登录页
+                        session.setAttribyte(s:"",o:"请先登录")
+                        response.sendRedirect(s:"/")
+                        return false;
+                       但是这个方法在前端页面无法获取msg（因为没有登陆成功）
+                     如果采用request的转发器getRequestDispatcher进行转发:
+                        //拦截住。未登录。跳转到登录页
+                        request.setAttribute(s:"msg",o:"请先登录");
+                        request.getRequestDispatcher(s:"/").forward(request,response);
+                        return false;
+
+                2.3但是我们发现重定向到登录页面后，所有的静态资源没有了。这说明拦截器不止拦截了动态请求，而且拦截了静态资源
+                    比如：http://localhost:8080/css/style.css
+                    /** 代表拦截所有请求包括静态资源
+                    因此我们需要在addInterceptor下配置放行的静态资源
+                    方式1：
+                        一个个加
+                        public class WebConfig implements WebMvcConfigurer {
+                            @Override
+                            public void addInterceptors(InterceptorRegistry registry) {
+                                registry.addInterceptor(new LoginInterceptor())
+                                        .addPathPatterns("/**")
+                                        .excludePathPatterns("/","/login",
+                                                "/css/**","/fonts/**",
+                                                "/images/**","/js/**");
+                            }
+                        }
+                    方式2：
+                        设置静态资源的访问路径，这样更方便（但是当我们的页面中的请求已经写好了，这个方法更麻烦）
+                        步骤一：
+                            spring:
+                              mvc:
+                                static-path-pattern: /static/**
+                        步骤二：
+                            去html中将使用到的所有惊天资源路径前就上步骤一设置的前缀
+                        步骤三：
+                            同方式1：
+                                .excludePathPatterns("/","/login","/static/**");
+
+
+-------------------------------------------------------------------------------------------------------------------------
+7、文件上传
+    1、页面表单
+    2、文件上传代码
+    3、自动配置原理（vedio）
+    （springboot是否对其做了自动配置，自动配置了哪些，然后我们去调试源码）
+        文件上传自动配置类-MultipartAutoConfiguration-MultipartProperties
+        ● 自动配置好了 StandardServletMultipartResolver   【文件上传解析器】
+        ● 原理步骤
+          ○ 1、请求进来使用文件上传解析器判断（isMultipart--(看文件类型是否以multipart/开头)）并封装（resolveMultipart，返回MultipartHttpServletRequest）文件上传请求
+                    进入this.multipartResolver.resolveMultipart(request)后我们发现它是将request封装为StandardMultipartHttpServletRequest对象并且返回类型为：MultipartHttpServletRequest
+                    然后进入handle()内部：
+                        进入handleInternal内部：
+                            进入invokeHandlerMethod内部：
+                                这里面有参数解析器等（argumentResolvers），其中：RequestPartMethodArgumentResolver就是可以文件上传的参数解析器
+                                往下执行，我们进入invocableMethod.invokeAndHandle()内部:
+                                    进入invokeForRequest()   执行请求
+                                        getMethodArgumentValues获取方法的每一个参数值：（那所有的参数解析器来解析每一个参数）
+                                            遍历所有参数，supportsParameter（所有的参数解析器来处理当前的参数）
+                                            this.resolvers.resolveArgument解析参数:
+                                                resolver.resolveArgument:
+                                                    拿到原生请求
+                                                    获取参数注解（@RequestPart）
+                                                    获取对应的参数名字 例如：photos
+                                                    使用这个代理MultipartResolutionDelegate.resolveMultipartArgument解析参数：
+                                                        判断是否是文件上传请求，如果是，再判断是否是文件上传数组，然后获取photos中所有部分封装为一个List<MultipartFile>files  （进入multipartRequest.getFiles(name)）
+                                                            multipartRequest是原生的request
+                                                            进入getMultipartFiles（）：
+                                                                返回被文件上传解析器解析过得文件集合（类型是：MultivalueMap<string,MultipartFile>）（这里面不仅仅只有photos，还有其他）
+
+          ○ 2、参数解析器来解析请求中的文件内容封装成MultipartFile
+          ○ 3、将request中文件信息封装为一个Map；MultiValueMap<String, MultipartFile>
+                我们在controller的注解无非就是将人家已经存在MultiValueMap中部分按照key取出来
+        FileCopyUtils。实现文件流的拷贝
+    4.实验
+        我们以Forms中的功能为例（form_layouts.html）
+         1. 设置FormController
+            1.访问form_layouts的请求（同时修改html中的部分）
+         2.使用之前的common模板抽取来修改html部分
+         3.测试我们是否可以访问form_layouts页面
+         4.然后修改form_layouts页面中上擦混文件的表单部分
+            （尤其注意每一个input的name）
+            <form role="form" th:action="@{/upload}" method="post" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label for="exampleInputEmail1">邮箱</label>
+                    <input type="email" name="email" class="form-control" id="exampleInputEmail1" placeholder="Enter email">
+                </div>
+                <div class="form-group">
+                    <label for="exampleInputPassword1">名字</label>
+                    <input type="text" name="username" class="form-control" id="exampleInputPassword1" placeholder="Password">
+                </div>
+                <div class="form-group">
+                    <label for="exampleInputFile">头像</label>
+                    <input type="file" name="headerImg" id="exampleInputFile">
+                </div>
+                <div class="form-group">
+                    <label for="exampleInputFile">生活照</label>
+                    <input type="file" name="photos" multiple>
+                </div>
+                <div class="checkbox">
+                    <label>
+                        <input type="checkbox"> Check me out
+                    </label>
+                </div>
+                <button type="submit" class="btn btn-primary">提交</button>
+            </form>
+           (单文件上传：<input type="file" name="headerImg"   id="exampleInputFile">
+           多文件上传： <input type="file" name="photos"      multiple>)
+         5.处理表单上传的数据
+         （MultipartFile 、MultipartFile[]
+            @RequestPart）
+          /**
+              * MultipartFile 自动封装上传过来的文件
+              */
+             @PostMapping("/upload")
+             public String upload(@RequestParam("email") String email,
+                                  @RequestParam("username") String username,
+                                  @RequestPart("headerImg") MultipartFile headerImg,
+                                  @RequestPart("photos") MultipartFile[] photos) throws IOException {
+
+                 log.info("上传的信息：email={}，username={}，headerImg={}，photos={}",
+                         email,username,headerImg.getSize(),photos.length);
+
+                 if(!headerImg.isEmpty()){
+                     //保存到文件服务器，OSS服务器
+                     String originalFilename = headerImg.getOriginalFilename();
+                     headerImg.transferTo(new File("H:\\cache\\"+originalFilename));
+                 }
+
+                 if(photos.length > 0){
+                     for (MultipartFile photo : photos) {
+                         if(!photo.isEmpty()){
+                             String originalFilename = photo.getOriginalFilename();
+                             photo.transferTo(new File("H:\\cache\\"+originalFilename));
+                         }
+                     }
+                 }
+
+
+                 return "main";
+             }
+          6.注意：
+           所有的文件上传是自动配置的，例如：    maxuploadsize
+           我们可以去MultipartAutoConfiguration
+                1.然后去类MultipartProperties
+                    这里面就有很多先关的属性
+                2.并且我们也知道了与文件上传相关的配置设置
+                    spring.servlet.multipart
+                        spring.servlet.multipart.max-file-size=10MB  （单个文件）
+                        spring.servlet.multipart.max-request-size=100MB （提交所有文件大小总和）
+          7.tranferTo方法：
+          photo.transferTo(new File("F:\\视频资料\\springboot\\uploadTest\\" + photoName));
+          路径时拼接，所以最后需要“\\”
+
+-------------------------------------------------------------------------------------------------------------------------
+8、异常处理（高级特性spring-boot-features-
+                    7. Developing Web Applications
+                        7.1. The “Spring Web MVC Framework”
+                            7.1.10. Error Handling）
+ 1、错误处理
+    1、默认规则（默认的error处理机制）
+        ● 默认情况下，Spring Boot提供/error处理所有错误的映射
+            ● 对于机器客户端，它将生成JSON响应，其中包含错误，HTTP状态和异常消息的详细信息。
+            ● 对于浏览器客户端，响应一个“ whitelabel”错误视图，以HTML格式呈现相同的数据
+            ● 如果要对其进行自定义：三种方式
+                ● 我们添加一个视图View解析名称为error；
+                ● 要完全替换默认行为，可以实现 ErrorController 并注册该类型的Bean定义，
+                    或添加ErrorAttributes类型的组件以使用现有机制但替换其内容。
+             ● error/下的4xx，5xx页面（404.html等）会被自动解析；
+                这个error文件夹可以放在static或者templates下
+                例如对于我们这个后台管理系统就使用人家设置好的404页面等
+             实验：
+                1.在templates下新建文件夹error，将页面放入
+                    404.html和500.html或者我们可以命名为：5xx.html也可以
+                2.引入thymeleaf语法
+                3.修改这两个页面的请求
+                    404-->返回index.html
+                    5xx-->
+                            1.展示错误信息（timestamp\status\error\message\path\trace）
+                                以上这些我们直接使用thymeleaf语法就可以获取
+                                (想要出现500需要是服务器内部出错，比如我们可以在controller中设置算术异常)
+                                    <h3 th:text="${message}">Something went wrong.</h3>
+                                    <p class="nrml-txt" th:text="${trace}"></p>
+
+    2、定制错误处理逻辑（六种方式）
+        ● 自定义错误页
+          ○ error/404.html   error/5xx.html；
+            有精确的错误状态码页面就匹配精确，没有就找 4xx.html；
+            如果都没有就触发白页
+        ● @ControllerAdvice+@ExceptionHandler处理全局异常；
+            底层是 ExceptionHandlerExceptionResolver 支持的
+                实验：
+                    创建包exception(自定义处理指定异常的方法)
+                    @ControllerAdvice     //相当于对Component的增强
+                    public class GlobalExceptionHandler {
+                        @ExceptionHandler(value = {ArithmeticException.class,NullPointerException.class})
+                        public String exceptionHand(){
+                            return "login";
+                        }
+                    }
+        ● @ResponseStatus+自定义异常 ；
+            底层是 ResponseStatusExceptionResolver ，
+            把responsestatus注解的信息底层调用 response.sendError(statusCode, resolvedReason)；
+            tomcat发送的/error
+                实验：
+                    1.自定义一个异常（UserTooManyException(运行时异常),一般只需要有参（super(形参)）、无参构造器即可）
+                        注意：这个异常类需要使用注解@ResponseStatus
+                        例如：@Responsestatus(value=Httpstatus.FORBIDDEM)  //403
+                        ------
+                            @ResponseStatus(value = HttpStatus.FORBIDDEN,reason = "用户数量太多了！！！")
+                            public class UserTooManyException extends RuntimeException{
+                                public UserTooManyException(){}
+
+                                public UserTooManyException(String message){
+                                    super(message);
+                                }
+                            }
+                        ------
+                    2.在controller中处理dynamic_table的地方（如果用户超过多少个就跑出上面的异常）
+                        throw
+                        ------
+                                if(people.size()>3){
+                                    throw new UserTooManyException();
+                                }
+                        ------
+                    3.如果想要跳转到我们自定义的error/的页面，
+                    我们需要设置4xx.html文件，并且使用message、status
+
+        ● Spring底层的异常（即该异常是框架抛出的（我们没有指定谁来处理）），
+            如
+                参数类型转换异常；DefaultHandlerExceptionResolver 处理框架底层的异常。
+                ○ response.sendError(HttpServletResponse.SC_BAD_REQUEST, ex.getMessage());
+
+        ● 自定义实现 HandlerExceptionResolver 处理异常；可以作为默认的全局异常处理规则
+            因为以上所出现的异常解析器都是HandlerExceptionResolver接口
+                实验：自定义异常解析器
+                    1.设置一个类（实现接口HandlerExceptionResolver）
+                    2.该类需要使用Component注解注册到ioc中
+                    3.思考只需要以上两步我们自定义的异常解析器是否可以生效
+                        否，因为可能会被之前说的四个异常解析器处理，轮不到我们自定义的这个
+                    4.为该类设置注解Order(value=Ordered.HIGHEST_PRECEDENCE) 设置最高优先级
+                    一下代码代表可以解决所有异常（因为我们的优先级高，可以作为默认的全局异常处理规则）
+                    代码中的response.sendError
+                        其实是仿写：例如我们进入DefaultHandlerExceptionResolver中，看看doResolveException中的handleMissingServletRequestParameter（这是处理浏览器缺少参数的400错误）
+                            其内部：
+                                response.sendError(HttpServletResponse.SC_BAD_REQUEST, ex.getMessage());
+                                return new ModelAndView();
+                                因此我们自定义的一个异常解析器可以根据这个模式写。
+                    -----
+                        //@Order(1)
+                        @Order(value = Ordered.HIGHEST_PRECEDENCE)
+                        @Component
+                        public class MyFavoriteException implements HandlerExceptionResolver {
+                            @Override
+                            public ModelAndView resolveException(HttpServletRequest request,
+                                                                 HttpServletResponse response,
+                                                                 Object handler,
+                                                                 Exception ex) {
+                                try {
+                                    response.sendError(511,"我喜欢的错误");
+                                } catch (IOException e) {
+                                    e.printStackTrace();
+                                }
+                                return new ModelAndView();
+                            }
+                        }
+
+                    -----
+        ● ErrorViewResolver  实现自定义处理异常；
+          ○ response.sendError 。error请求就会转给controller
+          ○ 你的异常没有任何人能处理。tomcat底层 response.sendError。error请求就会转给controller
+          ○ basicErrorController 要去的页面地址是 ErrorViewResolver  ；
+                一般除非我们不想去我们error/下的错误页时才会自定义这个
+
+    3、异常处理自动配置原理
+         思考为什么会有以上的默认规则：说明是springboot配置好的。
+            分析自动配置原理（自动配置包（spring-boot-autoconfiguration-->））
+                autoconfigure\web\servlet\error\ErrorMvcAutoConfiguration.class
+            ● ErrorMvcAutoConfiguration  自动配置异常处理规则
+                ○ 容器中的组件：类型：DefaultErrorAttributes -> id：errorAttributes
+                  我们进入DefaultErrorAttributes内部：
+                  ■ public class DefaultErrorAttributes implements ErrorAttributes, HandlerExceptionResolver
+                  ■ DefaultErrorAttributes：定义错误页面中可以包含哪些数据（例如：trace、timestamp、status、message、exception、errors）。
+                ○ 容器中的组件：类型：BasicErrorController --> id：basicErrorController（json+白页 适配响应）
+                  ■ 处理默认 /error 路径的请求()；页面响应 new ModelAndView("error", model)；
+                    @RequestMapping("${server.error.path:${error.path:/error}}")
+                    server.error.path=/error 可以配置在配置文件中
+                    既然这个组件是一个controller，当获取请求后，我们需要响应（一些可以根据内容协商）：
+                        浏览器：errorHtml方法响应html（@RequestMapping(produces = MediaType.TEXT_HTML_VALUE)）
+                                最终会响应一个ModelAndView视图：视图名字是error
+                        非浏览器：ResponseEnity响应json
+                  ■ 容器中有组件 View->id是error；（响应默认错误页）
+                  ■ 容器中放组件 BeanNameViewResolver（视图解析器）；按照返回的视图名作为组件的id去容器中找View对象。
+                        @Bean(name = "error")
+                  		@ConditionalOnMissingBean(name = "error")
+                  		public View defaultErrorView() {
+                  			return this.defaultErrorView;
+                  		}
+
+                  		// If the user adds @EnableWebMvc then the bean name view resolver from
+                  		// WebMvcAutoConfiguration disappears, so add it back in to avoid disappointment.
+                  		@Bean
+                  		@ConditionalOnMissingBean
+                  		public BeanNameViewResolver beanNameViewResolver() {
+                  			BeanNameViewResolver resolver = new BeanNameViewResolver();
+                  			resolver.setOrder(Ordered.LOWEST_PRECEDENCE - 10);
+                  			return resolver;
+                  		}
+                  如果想要返回页面；就会找error视图【StaticView】。(默认是一个白页)
+
+                ○ 容器中的组件：类型：DefaultErrorViewResolver -> id：conventionErrorViewResolver
+                  ■ 如果发生错误，会以HTTP的状态码 作为视图页地址（viewName），找到真正的页面
+                  ■ error/404、5xx.html
+
+    4、异常处理步骤流程
+        1、执行目标方法（doDispatch的handle方法），目标方法运行期间有任何异常都会被catch、而且标志当前请求结束；并且用 dispatchException
+        2、进入视图解析流程（尽管目标方法出现了异常，但是我们依然会进入视图解析流程（processDispatchResult））
+        （   所谓的视图解析即需要进行页面渲染，如何渲染？）
+            processDispatchResult(processedRequest, response, mappedHandler, mv, dispatchException);
+            mv是上面的handle正确执行后的返回值，此时mv为空
+            此时我们进入processDispatchResult，发现下面的3：
+        3、mv = processHandlerException（。。。）；
+            处理handler发生的异常，处理完成返回ModelAndView；
+            我们进入processHandlerException内部：
+                ● 1、遍历所有的 handlerExceptionResolvers，看谁能处理当前异常【HandlerExceptionResolver处理器异常解析器】
+                            public interface HandlerExceptionResolver {
+                                @Nullable
+                                    ModelAndView resolveException(
+                                            HttpServletRequest request, HttpServletResponse response, @Nullable Object handler, Exception ex);
+                                }
+                ● 2、系统默认的异常解析器(以下的解析器都是实现了接口HandlerExceptionResolver)；
+                    - 1.DefaultErrorAttributes
+                    - 2.HandlerExceptionResolverComposite
+                        0=(ExceptionHandlerExceptionResolver  ---》对应注解@ExceptionHandler
+                        1=(ResponseStatusExceptionResolver    ---》对应注解@ResponseStatus
+                        2=(DefaultHandlerExceptionResolver
+
+                  ○ 1、DefaultErrorAttributes先来处理异常（使用的方法就是我们在 3.异常处理自动配置原理 提到的DefaultErrorAttributes的resolverException）。
+                        在resolverException（返回值就是ModelAndView）中，有：
+                            storeErrorAttributes(request,ex);，进入内部：
+                                request.setAttribute(ERROR_ATTRIBUTE,ex);这就是把异常信息保存到request域，并且返回null；
+                       如果异常解析器返回的ModelAndView为空，则继续交给其他的异常解析器处理
+                  ○ 2、默认没有任何人能处理异常，所以异常会被抛出
+                    ■ 1、如果没有任何人能处理,最终底层就会发送 /error 请求。会被底层的BasicErrorController(专门处理/error的请求)处理
+                            此时又到了handle，放行就会进入BasicErrorController的errorHtml方法（其实已经经过内容协商了）
+                    ■ 2、解析错误视图(errorHtml中有resolverErrorView())；
+                            遍历所有的  ErrorViewResolver  看谁能解析。
+                                (默认只有一个DefaultErrorViewResolver)
+                    ■ 3、默认的 DefaultErrorViewResolver（我们也可以自定义） ,
+                            作用是把响应状态码作为错误页的地址，error/500.html
+                    ■ 4、模板引擎最终响应这个页面 error/500.html
+
+----------------------------------------------------------------------------------------------------------------------------
+9、Web原生组件注入（Servlet、Filter、Listener）
+                Spring Boot Features
+                    7. Developing Web Applications
+                        7.4. Embedded Servlet Container Support
+                            7.4.1. Servlets, Filters, and listeners
+     在ssm整合阶段，我们是将这些东西配置在web.xml中
+      现在我牌面问使用以下两种方法：
+                            使用Servlet API
+                            使用RegistrationBean
+    1、使用Servlet API
+        1.1实验步骤：
+            1.创建一个自定义的servlet类。继承原生的HttpServlet，
+            2.并且让该类使用注解@WebServlet
+                @WebServlet(urlPattern="/my")
+                urlPattern说明这个servlet到底处理啥请求
+                （7.4.2. Servlet Context Initialization
+                @WebServlet, @WebFilter, and @WebListener can be enabled by using @ServletComponentScan
+                ）
+            3.重写该类的doGet
+            4.按照2中的要求，我们需要主程序类中使用注解（@ServletComponentScan）
+                @ServletComponentScan(basePackages="com.atguigu.boot")
+                加上这个配置代表在该包下的所有servlet都可被扫描到
+            ----------------------------------------
+            @WebServlet(urlPatterns = "/my")  //urlPattern说明这个servlet到底处理啥请求
+            public class MyServlet  extends HttpServlet {
+                @Override
+                protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
+                    resp.getWriter().write("这是我们的servlet");
+                }
+            }
+            ----------------------
+            @Slf4j
+            @WebFilter(urlPatterns={"/css/*","/images/*"})  //此时访问http://localhost:8080/css/style.css就不行了
+            public class MyFilter implements Filter {
+                @Override
+                public void init(FilterConfig filterConfig) throws ServletException {
+                    log.info("webfilter初始化完成！！！" );
+                }
+
+                @Override
+                public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain) throws IOException, ServletException {
+
+                    log.info("webfilter放行！！！" );
+                    //必须放行
+                    chain.doFilter(request, response);
+                }
+
+                @Override
+                public void destroy() {
+                    log.info("webfilter销毁！！！" );
+                }
+            }
+            ----------------------
+            @Slf4j
+            @WebListener
+            public class MyListener implements ServletContextListener {
+                @Override
+                /**
+                 * 当前项目的初始化
+                 */
+                public void contextInitialized(ServletContextEvent sce) {
+                    log.info("MyListener监听到项目初始化完成" );
+                }
+
+                @Override
+                public void contextDestroyed(ServletContextEvent sce) {
+                    log.info("MyListener监听到项目销毁" );
+
+                }
+            }
+            ----------------------------------------
+        1.2分析：
+            @ServletComponentScan(basePackages = "com.atguigu.admin") :指定原生Servlet组件都放在那里
+            @WebServlet(urlPatterns = "/my")：
+                效果：直接响应，没有经过Spring的拦截器！！！
+                    分析：（vedio-57）
+                        其实就是一个精确匹配优先原则：
+                            一个DispatcherServlet     Spring
+                            一个MyServlet             tocmat
+                                我们访问http://localhost:8080/my时，由于对于Myservlet来说匹配的更精确，所以交给tocmat处理
+            @WebFilter(urlPatterns={"/css/*","/images/*"})  //注意单个*是servlet的写法，**是spring的写法
+            @WebListener
+            推荐可以这种方式；
+            ---------
+            扩展：DispatchServlet 如何注册进来
+                ● 容器中自动配置了  DispatcherServlet  属性绑定到 WebMvcProperties；对应的配置文件配置项是 spring.mvc。
+                ● 通过 ServletRegistrationBean<DispatcherServlet> 把 DispatcherServlet  配置进来。
+                ● 默认映射的是 / 路径。
+
+            Tomcat-Servlet；
+            多个Servlet都能处理到同一层路径，精确优选原则
+            A： /my/
+            B： /my/1
+
+
+    2、使用RegistrationBean
+        7.4.1. Servlets, Filters, and listeners
+        If convention-based mapping is not flexible enough,
+        you can use
+                    the ServletRegistrationBean,
+                        FilterRegistrationBean, and
+                        ServletListenerRegistrationBean
+                    classes for complete control.
+        该方式其实就是将上面的代码中的WebFilter WebListener WebServlet去掉，然后设置一个配置类
+        在配置类中注册一个组件 返回值设置为ServletRegistrationBean
+
+            @Configuration
+            public class MyServletConfig implements WebMvcConfigurer {
+                @Bean
+                public ServletRegistrationBean myServlet(){
+                    MyServlet myServlet = new MyServlet();
+                    return  new ServletRegistrationBean(myServlet,"/my","/my02");
+                }
+
+                @Bean
+                public FilterRegistrationBean myFilter(){
+                    MyFilter myFilter = new MyFilter();
+                    //myservlet拦截谁，这的filter就拦截谁
+            //        return new FilterRegistrationBean(myFilter,myServlet());
+            //        如果想要自定义拦截路径urlPattern
+                    FilterRegistrationBean filterRegistrationBean = new FilterRegistrationBean(myFilter);
+                    filterRegistrationBean.setUrlPatterns(Arrays.asList("/css/*","/my01"));
+                    return filterRegistrationBean;
+                }
+
+                @Bean
+                public ServletListenerRegistrationBean myListener(){
+                    MyListener myListener = new MyListener();
+                    return new ServletListenerRegistrationBean(myListener);
+                }
+            }
+
+----------------------------------------------------------------------------------------------------------------------------
+10、嵌入式Servlet容器
+            Spring Boot Features
+                    7. Developing Web Applications
+                        7.4. Embedded Servlet Container Support
+                            7.4.3The ServletWebServerApplicationContext
+                    在底层，SpringBoot 使用不同类型的 ApplicationContext 来支持嵌入式 servlet 容器。
+                    ServletWebServerApplicationContext（servlet的web服务器的ioc容器） 是 WebApplicationContext 的一种特殊类型，
+                    它通过搜索单个 ServletWebServerFactory bean 自我引导。
+                    通常，TomcatServletWebServerFactory、 JettyServletWebServerFactory 或 UndertowServletWebServerFactory 已被自动配置。
+    1、切换嵌入式Servlet容器(意思就是将springboot使用其他服务器不止tocmat)
+        ● 默认支持的webServer
+          ○ Tomcat, Jetty, or Undertow
+          ○ ServletWebServerApplicationContext 容器启动寻找ServletWebServerFactory 并引导创建服务器
+        ● 切换服务器
+            因为服务器使我们的web场景启动器导入进来的，所以我们需要在web场景启动器中引入不同的服务器
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-starter-web</artifactId>
+                1.排除tocmat场景
+                <exclusions>
+                    <exclusion>
+                        <groupId>org.springframework.b oot</groupId>
+                        <artifactId>spring-boot-starter-tomcat</artifactId>
+                    </exclusion>
+                </exclusions>
+            </dependency>
+            2.可以引入其他的服务器依赖
+                例如：spring-boot-starter-undertow
+                <dependency>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-undertow</artifactId>
+                </dependency>
+        ● 原理（vedio-58）
+          ○ SpringBoot应用启动发现当前是Web应用。web场景包-导入tomcat
+          ○ web应用会创建一个web版的ioc容器 ServletWebServerApplicationContext
+          ○ ServletWebServerApplicationContext
+                启动的时候寻找 ServletWebServerFactory（Servlet 的web服务器工厂--生产的就是--> Servlet 的web服务器）
+          ○ SpringBoot底层默认有很多的 WebServer工厂；
+                TomcatServletWebServerFactory,
+                JettyServletWebServerFactory,
+                UndertowServletWebServerFactory
+          ○ 底层直接会有一个自动配置类（底层把这些工厂配置好了）。
+                ServletWebServerFactoryAutoConfiguration
+          ○ ServletWebServerFactoryAutoConfiguration导入了ServletWebServerFactoryConfiguration（配置类）
+          ○ ServletWebServerFactoryConfiguration 配置类（这里面就有上面的三个工厂（但是注册到ioc中都是有条件的））
+                @ConditionalOnClass({ Servlet.class, Tomcat.class, UpgradeProtocol.class })                 -->  TomcatServletWebServerFactory
+                @ConditionalOnClass({ Servlet.class, Server.class, Loader.class, WebAppContext.class })     -->JettyServletWebServerFactory
+                    Server属于import org.eclipse.jetty.server.Server;（jetty的jar包）
+                @ConditionalOnClass({ Servlet.class, Undertow.class, SslClientAuthMode.class })             -->UndertowServletWebServerFactory
+
+            根据动态判断系统中到底导入了那个Web服务器的包。
+                （默认是web-starter导入tomcat包），容器中就有 TomcatServletWebServerFactory
+          ○ TomcatServletWebServerFactory
+                创建出Tomcat服务器并启动；
+                TomcatWebServer 的构造器拥有初始化方法initialize---this.tomcat.start();
+          ○ 内嵌服务器，就是手动把启动服务器的代码调用（tomcat核心jar包存在）
+    2.定制Servlet容器
+
+        ● 在ServletWebServerFactoryAutoConfiguration中有一个定制化器：WebServerFactoryCustomizer<ConfigurableServletWebServerFactory>
+          ○ 作用把配置文件的值和ServletWebServerFactory（工厂） 进行绑定
+        ● 第一种定制方法：修改配置文件 server.xxx
+            其实无论内置服务器是不是tocmat，我们都是将设置放在ServerProperties(这个东西绑定的就是以server开始的配置)
+        ● 第二种定制方法：直接自定义 ConfigurableServletWebServerFactory
+            7.4.4. Customizing Embedded Servlet Containers
+
+            ------------------------------------------------
+            xxxxxCustomizer：定制化器，可以改变xxxx的默认规则
+
+            import org.springframework.boot.web.server.WebServerFactoryCustomizer;
+            import org.springframework.boot.web.servlet.server.ConfigurableServletWebServerFactory;
+            import org.springframework.stereotype.Component;
+            @Component
+            public class CustomizationBean implements WebServerFactoryCustomizer<ConfigurableServletWebServerFactory> {
+
+                @Override
+                public void customize(ConfigurableServletWebServerFactory server) {
+                    server.setPort(9000);
+                }
+
+            }
+
+----------------------------------------------------------------------------------------------------------------------------
+
+11、定制化原理（总结vedio59）
+   1、定制化的常见方式
+       ● 修改配置文件；
+       ● xxxxxCustomizer；
+       ● 编写自定义的配置类   xxxConfiguration；+ @Bean替换、增加容器中默认组件；视图解析器
+       ● Web应用 编写一个配置类实现 WebMvcConfigurer 即可定制化web功能；+ @Bean给容器中再扩展一些组件
+           @Configuration
+           public class AdminWebConfig implements WebMvcConfigurer
+
+       ● @EnableWebMvc + WebMvcConfigurer —— @Bean  可以全面接管SpringMVC，所有规则全部自己重新配置； 实现定制和扩展功能
+         ○ 原理
+         ○ 1、WebMvcAutoConfiguration  默认的SpringMVC的自动配置功能类。静态资源、欢迎页.....
+         ○ 2、一旦使用 @EnableWebMvc 、。会 @Import(DelegatingWebMvcConfiguration.class)
+         ○ 3、DelegatingWebMvcConfiguration 的 作用，只保证SpringMVC最基本的使用
+           ■ 把所有系统中的 WebMvcConfigurer 拿过来。所有功能的定制都是这些 WebMvcConfigurer  合起来一起生效
+           ■ 自动配置了一些非常底层的组件。RequestMappingHandlerMapping、这些组件依赖的组件都是从容器中获取
+           ■ public class DelegatingWebMvcConfiguration extends WebMvcConfigurationSupport
+         ○ 4、WebMvcAutoConfiguration 里面的配置要能生效 必须
+                @ConditionalOnMissingBean(WebMvcConfigurationSupport.class)
+         ○ 5、@EnableWebMvc  导致了 WebMvcAutoConfiguration  没有生效。
+       ● ... ...
+       /**
+        * 1、编写一个拦截器实现HandlerInterceptor接口
+        * 2、拦截器注册到容器中（实现WebMvcConfigurer的addInterceptors）
+        * 3、指定拦截规则【如果是拦截所有，静态资源也会被拦截】
+        *
+        * @EnableWebMvc:全面接管
+        *      1、静态资源？视图解析器？欢迎页.....全部失效
+        */
+       //@EnableWebMvc
+       @Configuration
+       public class WebConfig implements WebMvcConfigurer {
+           @Override
+           public void addInterceptors(InterceptorRegistry registry) {
+               registry.addInterceptor(new LoginInterceptor())
+                       .addPathPatterns("/**")  //所有请求都被拦截包括静态资源
+                       .excludePathPatterns("/","/login","/css/**","/fonts/**","/images/**",
+                               "/js/**","/aa/**"); //放行的请求
+
+       //        registry.addInterceptor(redisUrlCountInterceptor)
+       //                .addPathPatterns("/**")
+       //                .excludePathPatterns("/","/login","/css/**","/fonts/**","/images/**",
+       //                        "/js/**","/aa/**");
+           }
+
+           /**
+            * Filter、Interceptor 几乎拥有相同的功能？
+            * 1、Filter是Servlet定义的原生组件。好处，脱离Spring应用也能使用
+            * 2、Interceptor是Spring定义的接口。可以使用Spring的自动装配等功能
+            *
+            */
+       //    @Autowired
+       //    RedisUrlCountInterceptor redisUrlCountInterceptor;
+
+           /**
+            * 定义静态资源行为
+            * @param registry
+            */
+       //    @Override
+       //    public void addResourceHandlers(ResourceHandlerRegistry registry) {
+       //        /**
+       //         * 访问  /aa/** 所有请求都去 classpath:/static/ 下面进行匹配
+       //         */
+       //        registry.addResourceHandler("/aa/**")
+       //                .addResourceLocations("classpath:/static/");
+       //    }
+
+       //    @Bean
+       //    public WebMvcRegistrations webMvcRegistrations(){
+       //        return new WebMvcRegistrations(){
+       //            @Override
+       //            public RequestMappingHandlerMapping getRequestMappingHandlerMapping() {
+       //                return null;
+       //            }
+       //        };
+       //    }
+       }
+
+
+   2、原理分析套路
+    场景starter - xxxxAutoConfiguration - 导入xxx组件 - 绑定xxxProperties -- 绑定配置文件项
